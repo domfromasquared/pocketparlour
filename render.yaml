@@ -1,0 +1,22 @@
+
+services:
+  - type: web
+    name: versus-games-server
+    env: node
+    plan: starter
+    rootDir: apps/server
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: PUBLIC_ORIGIN
+        value: https://your-client-domain.example
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
