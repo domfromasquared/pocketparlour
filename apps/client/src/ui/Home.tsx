@@ -257,7 +257,7 @@ export function Home() {
             className="btn-google"
             onClick={async () => {
               setAuthError(null);
-              const redirectTo = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+              const redirectTo = `${window.location.origin}${window.location.pathname}`;
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: { redirectTo }
