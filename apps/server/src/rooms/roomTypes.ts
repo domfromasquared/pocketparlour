@@ -1,6 +1,6 @@
 // apps/server/src/rooms/roomTypes.ts
 import type { GameKey, RoomSummary, Seat } from "@versus/shared";
-import type { BJState } from "@versus/shared";
+import type { BJState, SpadesState, HEState } from "@versus/shared";
 import type { Socket } from "socket.io";
 
 export type PlayerConn = {
@@ -21,10 +21,13 @@ export type Room = {
   turnMs: number;
   seats: Seat[];
   conns: Map<string, PlayerConn>; // userId -> conn
+  waitingQueue?: { userId: string; displayName: string }[];
   matchId: string | null;
   rngSeed: number;
   // Game state (v1: Blackjack only)
   bjState?: BJState;
+  spadesState?: SpadesState;
+  heState?: HEState;
   turnDeadline?: number;
 };
 

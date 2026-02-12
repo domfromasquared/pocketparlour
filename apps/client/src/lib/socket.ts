@@ -11,18 +11,13 @@ export async function connectSocket(): Promise<Socket> {
 
   const state = useApp.getState();
 
-  // Anonymous auth (guest) but still a Supabase user identity (wallet persists)
   const session = (await supabase.auth.getSession()).data.session;
-  if (!session) {
-    await supabase.auth.signInAnonymously();
-  }
-  const session2 = (await supabase.auth.getSession()).data.session;
-  if (!session2) throw new Error("Failed to auth");
+  if (!session) throw new Error("Not logged in");
 
   socket = io(state.serverUrl, {
     transports: ["websocket"],
     auth: {
-      accessToken: session2.access_token,
+      accessToken: session.access_token,
       displayName: state.displayName
     }
   });
@@ -40,4 +35,11 @@ export async function connectSocket(): Promise<Socket> {
 
 export function getSocket(): Socket | null {
   return socket;
+}
+
+export function resetSocket() {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
 }

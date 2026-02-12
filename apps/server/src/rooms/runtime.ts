@@ -27,8 +27,21 @@ export function listRooms(): Room[] {
 export async function internalCleanupLeave(room: Room, userId: string, emitToRoom: (roomId: string, evt: ServerToClientEvent) => void) {
   // If active match and the only human leaves, cancel and refund (simple v1 policy).
   const stillSeated = room.seats.some(s => s.userId === userId);
-  if (stillSeated && room.status === "active") {
+  if (stillSeated && room.status === "active" && room.gameKey === "blackjack") {
     await cancelMatchIfActive(room, emitToRoom);
+  }
+
+  if (room.status === "active" && room.gameKey === "spades") {
+    room.conns.delete(userId);
+    const seat = room.seats.find(s => s.userId === userId);
+    if (seat) {
+      seat.isBot = true;
+      seat.ready = true;
+      seat.botDifficulty = seat.botDifficulty ?? 2;
+      if (!seat.displayName.startsWith("CPU")) seat.displayName = `CPU ${seat.seatIndex + 1}`;
+    }
+    emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
+    return;
   }
 
   leaveRoom(room, userId);

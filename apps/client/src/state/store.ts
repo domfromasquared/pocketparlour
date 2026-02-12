@@ -9,10 +9,16 @@ type AppState = {
   room: RoomSummary | null;
   youSeatIndex: number | null;
   publicState: any | null;
+  lastResult: null | { delta: string; newBalance: string; outcome: "win" | "lose" | "push" | "cancelled" };
+  authed: boolean;
+  userEmail: string | null;
   serverUrl: string;
 
   setDisplayName: (n: string) => void;
   applyServerEvt: (e: ServerToClientEvent) => void;
+  clearLastResult: () => void;
+  setAuthed: (authed: boolean, email?: string | null) => void;
+  setBalance: (balance: string) => void;
 
   selectedGame: GameKey;
   setSelectedGame: (g: GameKey) => void;
@@ -28,7 +34,10 @@ export const useApp = create<AppState>((set, get) => ({
   room: null,
   youSeatIndex: null,
   publicState: null,
-  serverUrl: import.meta.env.VITE_SERVER_URL,
+  lastResult: null,
+  authed: false,
+  userEmail: null,
+  serverUrl: import.meta.env.VITE_SERVER_URL ?? "http://localhost:8787",
 
   setDisplayName: (n) => {
     localStorage.setItem("vg_name", n);
@@ -38,14 +47,18 @@ export const useApp = create<AppState>((set, get) => ({
   applyServerEvt: (e) => {
     if (e.type === "auth:ok") set({ userId: e.user.userId });
     if (e.type === "wallet:balance") set({ balance: e.balance });
-    if (e.type === "room:joined") set({ room: e.room, youSeatIndex: e.youSeatIndex });
-    if (e.type === "room:left") set({ room: null, youSeatIndex: null, publicState: null });
+    if (e.type === "room:joined") set({ room: e.room, youSeatIndex: e.youSeatIndex, lastResult: null });
+    if (e.type === "room:left") set({ room: null, youSeatIndex: null, publicState: null, lastResult: null });
     if (e.type === "room:update") set({ room: e.room });
     if (e.type === "game:state") set({ publicState: e.publicState });
     if (e.type === "game:ended") {
-      set({ balance: e.result.newBalance });
+      set({ balance: e.result.newBalance, lastResult: e.result });
     }
   },
+
+  clearLastResult: () => set({ lastResult: null }),
+  setAuthed: (authed, email = null) => set({ authed, userEmail: email }),
+  setBalance: (balance) => set({ balance }),
 
   selectedGame: "blackjack",
   setSelectedGame: (g) => set({ selectedGame: g }),

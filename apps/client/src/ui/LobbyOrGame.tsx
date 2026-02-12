@@ -3,6 +3,8 @@ import React, { useMemo } from "react";
 import { useApp } from "../state/store";
 import { getSocket } from "../lib/socket";
 import { BlackjackTable } from "./games/BlackjackTable";
+import { SpadesTable } from "./games/SpadesTable";
+import { HoldemTable } from "./games/HoldemTable";
 
 export function LobbyOrGame() {
   const { room } = useApp();
@@ -10,31 +12,30 @@ export function LobbyOrGame() {
 
   const leave = () => {
     getSocket()?.emit("evt", { type: "room:leave" });
-    // Simple local clear; server will also emit room:left on real implementation.
-    // TODO: implement room:leave on server with roomId lookup and cleanup.
-    window.location.reload();
   };
 
   const isActive = room.status === "active";
   const isEnded = room.status === "ended";
 
   return (
-    <div className="h-full flex flex-col gap-3">
-      <div className="panel p-3">
+    <div className="screen">
+      <div className="panel px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-xs text-white/60">Game</div>
-            <div className="text-lg font-black capitalize">{room.gameKey.replace("_", " ")}</div>
-            <div className="text-xs text-white/50">Stake: {room.stakeAmount.toString()}</div>
+            <div className="panel-title">Game</div>
+            <div className="text-lg font-black capitalize text-shadow">{room.gameKey.replace("_", " ")}</div>
+            <div className="panel-subtle">Stake: {room.stakeAmount}</div>
           </div>
-          <button className="btn-ghost" onClick={leave}>Exit</button>
+          <button className="btn-red" onClick={leave}>Exit</button>
         </div>
       </div>
 
-      <div className="panel flex-1 min-h-0 p-2">
+      <div className="panel flex-1 min-h-0 p-2 game-panel">
         {!isActive && !isEnded && <Lobby />}
         {room.gameKey === "blackjack" && <BlackjackTable />}
-        {room.gameKey !== "blackjack" && (
+        {room.gameKey === "spades" && <SpadesTable />}
+        {room.gameKey === "holdem" && <HoldemTable />}
+        {room.gameKey !== "blackjack" && room.gameKey !== "spades" && room.gameKey !== "holdem" && (
           <div className="h-full grid place-items-center text-white/70">
             <div className="panel p-4 max-w-[320px] text-center">
               <div className="text-lg font-bold">Coming next</div>
@@ -52,23 +53,38 @@ export function LobbyOrGame() {
 }
 
 function Lobby() {
-  const { room } = useApp();
+  const { room, userId, youSeatIndex } = useApp();
+  const socket = getSocket();
+  const mySeat =
+    (youSeatIndex != null ? room?.seats.find(s => s.seatIndex === youSeatIndex) : undefined) ??
+    (userId ? room?.seats.find(s => s.userId === userId) : undefined);
+  const isReady = mySeat?.ready ?? false;
   return (
     <div className="h-full flex flex-col">
-      <div className="text-sm text-white/70 px-2 py-1">Seats</div>
+      <div className="panel-title px-2 py-1">Seats</div>
       <div className="grid grid-cols-1 gap-2 px-2 pb-2 overflow-hidden">
         {room?.seats.map((s) => (
           <div key={s.seatIndex} className="panel p-3 flex items-center justify-between">
             <div className="font-semibold">
               {s.displayName} {s.isBot ? "🤖" : ""}
             </div>
-            <div className="text-xs text-white/60">Seat {s.seatIndex + 1}</div>
+            <div className="panel-subtle">
+              Seat {s.seatIndex + 1} {s.ready ? "• Ready" : ""}
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="mt-auto px-2 pb-2 text-xs text-white/50">
-        Auto-start when required players are seated.
+      <div className="mt-auto px-2 pb-2 flex items-center justify-between gap-2">
+        <div className="panel-subtle">Auto-start when all players are ready.</div>
+        {mySeat && !mySeat.isBot && (
+          <button
+            className={isReady ? "btn-ghost" : "btn-green"}
+            onClick={() => socket?.emit("evt", { type: "room:ready", ready: !isReady })}
+          >
+            {isReady ? "Unready" : "Ready"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -79,28 +95,74 @@ function BottomActionBar() {
   const socket = getSocket();
 
   const isBJ = room?.gameKey === "blackjack";
+  const isHoldem = room?.gameKey === "holdem";
   const { publicState } = useApp();
+  const [raiseAmt, setRaiseAmt] = React.useState(100);
 
   return (
-    <div className="panel h-16 px-2 flex items-center justify-between">
+    <div className="action-bar">
       <button className="btn-ghost" onClick={() => alert("Rules modal TODO: show /docs/rules/" + room?.gameKey)}>
-        📜 Rules
+        Rules
       </button>
 
       {isBJ && publicState?.phase === "playerTurn" ? (
         <div className="flex gap-2">
-          <button className="btn-ghost" onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "bj:hit" } })}>
+          <button className="btn-blue" onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "bj:hit" } })}>
             Hit
           </button>
-          <button className="btn-primary" onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "bj:stand" } })}>
+          <button className="btn-green" onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "bj:stand" } })}>
             Stand
           </button>
         </div>
+      ) : isHoldem && publicState ? (
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-red"
+            onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "he:fold" } })}
+          >
+            Fold
+          </button>
+          {publicState?.legalActions?.some((a: any) => a.type === "he:check") && (
+            <button
+              className="btn-blue"
+              onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "he:check" } })}
+            >
+              Check
+            </button>
+          )}
+          {publicState?.legalActions?.some((a: any) => a.type === "he:call") && (
+            <button
+              className="btn-gold"
+              onClick={() => socket?.emit("evt", { type: "game:action", action: { type: "he:call" } })}
+            >
+              Call {publicState?.callAmount ?? ""}
+            </button>
+          )}
+          {publicState?.legalActions?.some((a: any) => a.type === "he:raise") && (
+            <div className="flex items-center gap-2">
+              <input
+                className="input-field h-10 w-20"
+                type="number"
+                min={publicState?.minRaise ?? 100}
+                value={raiseAmt}
+                onChange={(e) => setRaiseAmt(Number(e.target.value))}
+              />
+              <button
+                className="btn-green"
+                onClick={() =>
+                  socket?.emit("evt", { type: "game:action", action: { type: "he:raise", amount: raiseAmt } })
+                }
+              >
+                Raise
+              </button>
+            </div>
+          )}
+        </div>
       ) : (
-        <div className="text-xs text-white/60 px-2">Actions appear here</div>
+        <div className="panel-subtle px-2">Actions appear here</div>
       )}
 
-      <button className="btn-ghost" onClick={() => alert("Players drawer TODO")}>👥</button>
+      <button className="btn-ghost" onClick={() => alert("Players drawer TODO")}>Players</button>
     </div>
   );
 }

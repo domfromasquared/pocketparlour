@@ -49,6 +49,40 @@ async function applyLedgerTx(params: {
   return { applied: true };
 }
 
+export async function grantReward(params: {
+  userId: string;
+  amount: bigint;
+  gameKey: string;
+  idempotencyKey: string;
+  metadata?: any;
+}): Promise<bigint> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await ensureWalletRow(params.userId);
+    await applyLedgerTx(
+      {
+        userId: params.userId,
+        amount: params.amount,
+        type: "reward",
+        matchId: null,
+        gameKey: params.gameKey,
+        idempotencyKey: params.idempotencyKey,
+        metadata: params.metadata ?? {}
+      },
+      client
+    );
+    const balRes = await client.query("select balance from wallets where user_id=$1", [params.userId]);
+    await client.query("commit");
+    return BigInt(balRes.rows[0].balance);
+  } catch (e) {
+    await client.query("rollback");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function ensureWalletRow(userId: string) {
   await pool.query(
     `insert into wallets (user_id, balance) values ($1, 0)
@@ -205,6 +239,59 @@ export async function settleMatchWinnerTakeAll(params: {
     await client.query(
       `update matches set status='finished', winner_user_id=$1, finished_at=now() where match_id=$2`,
       [params.winnerUserId, params.matchId]
+    );
+
+    await client.query("commit");
+  } catch (e) {
+    await client.query("rollback");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function settleMatchSplitPot(params: {
+  matchId: string;
+  gameKey: string;
+  stakeAmount: bigint;
+  userIds: string[];
+  winnerUserIds: string[];
+  roomId: string;
+}) {
+  const stake = params.stakeAmount;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    const pot = stake * BigInt(params.userIds.length);
+    const winners = params.winnerUserIds;
+    if (stake > 0n && winners.length > 0) {
+      const base = pot / BigInt(winners.length);
+      let remainder = pot % BigInt(winners.length);
+      for (const uid of winners) {
+        let amount = base;
+        if (remainder > 0n) {
+          amount += 1n;
+          remainder -= 1n;
+        }
+        await applyLedgerTx(
+          {
+            userId: uid,
+            amount,
+            type: "payout",
+            matchId: params.matchId,
+            gameKey: params.gameKey,
+            idempotencyKey: `payout:${params.matchId}:${uid}`,
+            metadata: { roomId: params.roomId, model: "split_pot" }
+          },
+          client
+        );
+      }
+    }
+
+    await client.query(
+      `update matches set status='finished', winner_user_id=$1, finished_at=now() where match_id=$2`,
+      [winners[0] ?? null, params.matchId]
     );
 
     await client.query("commit");

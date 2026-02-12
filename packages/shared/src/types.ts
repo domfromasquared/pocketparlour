@@ -20,6 +20,7 @@ export type Seat = {
   userId?: string; // undefined => empty
   isBot: boolean;
   botDifficulty?: number; // 1..3
+  ready?: boolean;
   displayName: string;
 };
 
@@ -29,7 +30,7 @@ export type RoomSummary = {
   gameKey: GameKey;
   status: RoomStatus;
   createdAt: number;
-  stakeAmount: bigint; // chips per human (0 allowed)
+  stakeAmount: string; // bigint as string
   turnMs: number; // default 20000
   seats: Seat[];
 };
@@ -44,6 +45,7 @@ export const ClientToServerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("room:create"), gameKey: GameKeySchema, stakeAmount: z.string().regex(/^\d+$/).default("0") }),
   z.object({ type: z.literal("room:join"), roomCode: z.string().min(3).max(8) }),
   z.object({ type: z.literal("room:leave") }),
+  z.object({ type: z.literal("room:next") }),
   z.object({ type: z.literal("room:ready"), ready: z.boolean() }),
   // Game actions are game-specific; server validates.
   z.object({ type: z.literal("game:action"), action: z.any() })
