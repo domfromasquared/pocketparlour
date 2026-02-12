@@ -214,53 +214,65 @@ export function Home() {
       )}
 
       {!authed && (
-        <div className="panel px-3 py-2 flex flex-col gap-2">
-          <div className="panel-title">Sign In</div>
+        <div className="panel px-3 py-2 auth-card">
+          <div className="panel-title">Sign in</div>
+          <label className="auth-label" htmlFor="auth-email">Email address</label>
           <input
-            className="input-field"
+            id="auth-email"
+            className="input-field auth-input"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             inputMode="email"
           />
+          <label className="auth-label" htmlFor="auth-password">Password</label>
           <input
-            className="input-field"
+            id="auth-password"
+            className="input-field auth-input"
             type="password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+          <button className="auth-link" type="button" onClick={() => setAuthError("Password reset is not wired yet.")}>
+            Forgot password?
+          </button>
           {authError && <div className="panel-subtle">{authError}</div>}
-          <div className="grid grid-cols-2 gap-2">
+          <button
+            className="btn-blue auth-continue"
+            onClick={async () => {
+              setAuthError(null);
+              const { error } = await supabase.auth.signInWithPassword({ email, password });
+              if (error) setAuthError(error.message);
+            }}
+          >
+            Continue
+          </button>
+          <div className="auth-inline-row">
+            <span className="panel-subtle">Don&apos;t have an account?</span>
             <button
-              className="btn-green"
-              onClick={async () => {
-                setAuthError(null);
-                const { error } = await supabase.auth.signInWithPassword({ email, password });
-                if (error) setAuthError(error.message);
-              }}
-            >
-              Sign In
-            </button>
-            <button
-              className="btn-blue"
+              className="auth-link"
+              type="button"
               onClick={async () => {
                 setAuthError(null);
                 const { error } = await supabase.auth.signUp({ email, password });
                 if (error) setAuthError(error.message);
               }}
             >
-              Sign Up
+              Sign up
             </button>
           </div>
+          <div className="auth-divider" role="separator" aria-label="or">
+            <span>OR</span>
+          </div>
           <button
-            className="btn-google"
+            className="btn-google auth-google"
             onClick={async () => {
               setAuthError(null);
               const redirectTo =
                 window.location.hostname === "localhost"
                   ? "http://localhost:5173/"
-                  : "https://domfromasquared.github.io/pocketparlour/";
+                  : `${window.location.origin}${import.meta.env.BASE_URL}`;
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: { redirectTo }
