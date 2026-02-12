@@ -257,7 +257,10 @@ export function Home() {
             className="btn-google"
             onClick={async () => {
               setAuthError(null);
-              const redirectTo = `${window.location.origin}${window.location.pathname}`;
+              const redirectTo =
+                window.location.hostname === "localhost"
+                  ? "http://localhost:5173/"
+                  : "https://domfromasquared.github.io/pocketparlour/";
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: { redirectTo }
