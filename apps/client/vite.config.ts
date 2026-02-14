@@ -6,6 +6,7 @@ export default defineConfig({
   base: "/pocketparlour/",
   plugins: [react()],
   server: {
+    host: true,
     port: Number(process.env.VITE_DEV_PORT ?? 5173),
     strictPort: false
   }

@@ -1,4 +1,13 @@
-export const CARD_ASSET_BASE = "/src/ui/assets/cards";
+const CARD_IMPORTS = import.meta.glob("./cards/*.png", {
+  eager: true,
+  import: "default"
+}) as Record<string, string>;
+
+const CARD_BY_FILENAME = Object.entries(CARD_IMPORTS).reduce<Record<string, string>>((acc, [path, url]) => {
+  const file = path.split("/").pop();
+  if (file) acc[file] = url;
+  return acc;
+}, {});
 
 export type SuitCode = "S" | "H" | "D" | "C";
 export type RankCode = "A" | "K" | "Q" | "J" | "10" | "9" | "8" | "7" | "6" | "5" | "4" | "3" | "2";
@@ -16,8 +25,8 @@ export function cardLabelToAssetName(label: string): string | null {
 export function cardLabelToAssetUrl(label: string): string | null {
   const name = cardLabelToAssetName(label);
   if (!name) return null;
-  return `${CARD_ASSET_BASE}/${name}`;
+  return CARD_BY_FILENAME[name] ?? null;
 }
 
-export const CARD_BACK_1 = `${CARD_ASSET_BASE}/back1.png`;
-export const CARD_BACK_2 = `${CARD_ASSET_BASE}/back2.png`;
+export const CARD_BACK_1 = CARD_BY_FILENAME["back1.png"] ?? "";
+export const CARD_BACK_2 = CARD_BY_FILENAME["back2.png"] ?? "";

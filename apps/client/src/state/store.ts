@@ -37,7 +37,9 @@ export const useApp = create<AppState>((set, get) => ({
   lastResult: null,
   authed: false,
   userEmail: null,
-  serverUrl: import.meta.env.VITE_SERVER_URL ?? "http://localhost:8787",
+  serverUrl:
+    import.meta.env.VITE_SERVER_URL ??
+    `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:8787`,
 
   setDisplayName: (n) => {
     localStorage.setItem("vg_name", n);

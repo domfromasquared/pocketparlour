@@ -45,6 +45,19 @@ export function Home() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [showGameModal, setShowGameModal] = useState(false);
 
+  const oauthRedirectTo = useMemo(() => {
+    // In local/dev testing, always return to the exact origin currently hosting the app
+    // (e.g. your Mac LAN IP opened from phone), not the production GitHub Pages URL.
+    if (import.meta.env.DEV) {
+      const devBase = `${window.location.origin}${import.meta.env.BASE_URL}`;
+      return devBase.endsWith("/") ? devBase : `${devBase}/`;
+    }
+    const configured = import.meta.env.VITE_AUTH_REDIRECT_URL?.trim();
+    if (configured) return configured.endsWith("/") ? configured : `${configured}/`;
+    const base = `${window.location.origin}${import.meta.env.BASE_URL}`;
+    return base.endsWith("/") ? base : `${base}/`;
+  }, []);
+
   const join = async () => {
     await connectSocket();
     getSocket()!.emit("evt", { type: "room:join", roomCode });
@@ -269,13 +282,9 @@ export function Home() {
             className="btn-google auth-google"
             onClick={async () => {
               setAuthError(null);
-              const redirectTo =
-                window.location.hostname === "localhost"
-                  ? "http://localhost:5173/"
-                  : `${window.location.origin}${import.meta.env.BASE_URL}`;
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
-                options: { redirectTo }
+                options: { redirectTo: oauthRedirectTo }
               });
               if (error) setAuthError(error.message);
             }}
