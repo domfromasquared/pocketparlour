@@ -48,19 +48,14 @@ export function Home() {
   const devLoginPassword = import.meta.env.VITE_DEV_LOGIN_PASSWORD ?? "admin";
 
   const oauthRedirectTo = useMemo(() => {
-    // In local/dev testing, always return to the exact origin currently hosting the app
-    // (e.g. your Mac LAN IP opened from phone), not the production GitHub Pages URL.
-    if (import.meta.env.DEV) {
-      const devBase = `${window.location.origin}${import.meta.env.BASE_URL}`;
-      return devBase.endsWith("/") ? devBase : `${devBase}/`;
-    }
-    // For GitHub Pages project sites, force the repository subpath to avoid root-domain fallback.
-    if (window.location.hostname.endsWith("github.io")) {
-      return `https://${window.location.hostname}/pocketparlour/`;
-    }
-    const configured = import.meta.env.VITE_AUTH_REDIRECT_URL?.trim();
-    if (configured) return configured.endsWith("/") ? configured : `${configured}/`;
-    const base = `${window.location.origin}${import.meta.env.BASE_URL}`;
+    const fromEnv = (
+      import.meta.env.DEV
+        ? import.meta.env.VITE_AUTH_REDIRECT_URL_DEV ?? import.meta.env.VITE_AUTH_REDIRECT_URL
+        : import.meta.env.VITE_AUTH_REDIRECT_URL_PROD ?? import.meta.env.VITE_AUTH_REDIRECT_URL
+    )?.trim();
+    if (fromEnv) return fromEnv.endsWith("/") ? fromEnv : `${fromEnv}/`;
+
+    const base = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
     return base.endsWith("/") ? base : `${base}/`;
   }, []);
 

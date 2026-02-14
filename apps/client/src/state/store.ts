@@ -37,9 +37,17 @@ export const useApp = create<AppState>((set, get) => ({
   lastResult: null,
   authed: false,
   userEmail: null,
-  serverUrl:
-    import.meta.env.VITE_SERVER_URL ??
-    `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:8787`,
+  serverUrl: (() => {
+    const isDev = import.meta.env.DEV;
+    const envUrl = isDev
+      ? import.meta.env.VITE_SERVER_URL_DEV ?? import.meta.env.VITE_SERVER_URL
+      : import.meta.env.VITE_SERVER_URL_PROD ?? import.meta.env.VITE_SERVER_URL;
+    if (envUrl) return envUrl;
+    if (isDev) {
+      return `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:8787`;
+    }
+    return "";
+  })(),
 
   setDisplayName: (n) => {
     localStorage.setItem("vg_name", n);
