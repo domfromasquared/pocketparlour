@@ -5,7 +5,7 @@ services:
     env: node
     plan: starter
     rootDir: apps/server
-    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm build
+    buildCommand: pnpm -w install --frozen-lockfile --prod=false && pnpm -w --filter @versus/shared build && pnpm build
     startCommand: pnpm start
     envVars:
       - key: NODE_ENV
