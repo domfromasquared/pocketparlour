@@ -44,6 +44,8 @@ export function Home() {
   const spinAnimRef = useRef<number | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const [showGameModal, setShowGameModal] = useState(false);
+  const devLoginEmail = import.meta.env.VITE_DEV_LOGIN_EMAIL ?? "admin@pocketparlour.local";
+  const devLoginPassword = import.meta.env.VITE_DEV_LOGIN_PASSWORD ?? "admin";
 
   const oauthRedirectTo = useMemo(() => {
     // In local/dev testing, always return to the exact origin currently hosting the app
@@ -255,12 +257,33 @@ export function Home() {
             className="btn-blue auth-continue"
             onClick={async () => {
               setAuthError(null);
-              const { error } = await supabase.auth.signInWithPassword({ email, password });
+              const normalizedEmail = email.trim().toLowerCase();
+              const usingShortcut = import.meta.env.DEV && normalizedEmail === "admin" && password === "admin";
+              const { error } = await supabase.auth.signInWithPassword({
+                email: usingShortcut ? devLoginEmail : normalizedEmail,
+                password: usingShortcut ? devLoginPassword : password
+              });
               if (error) setAuthError(error.message);
             }}
           >
             Continue
           </button>
+          {import.meta.env.DEV && (
+            <button
+              className="btn-ghost auth-continue"
+              type="button"
+              onClick={async () => {
+                setAuthError(null);
+                const { error } = await supabase.auth.signInWithPassword({
+                  email: devLoginEmail,
+                  password: devLoginPassword
+                });
+                if (error) setAuthError(error.message);
+              }}
+            >
+              Dev Login (admin/admin)
+            </button>
+          )}
           <div className="auth-inline-row">
             <span className="panel-subtle">Don&apos;t have an account?</span>
             <button
@@ -282,6 +305,9 @@ export function Home() {
             className="btn-google auth-google"
             onClick={async () => {
               setAuthError(null);
+              if (import.meta.env.DEV) {
+                console.info("[oauth] redirectTo:", oauthRedirectTo);
+              }
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: { redirectTo: oauthRedirectTo }

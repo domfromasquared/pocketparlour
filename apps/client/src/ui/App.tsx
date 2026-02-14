@@ -83,9 +83,10 @@ function Loading() {
 }
 
 function TopHud() {
-  const { balance, room, displayName, authed, userEmail } = useApp();
+  const { balance, room, displayName, authed, userEmail, userId } = useApp();
   const roomCode = room?.roomCode ?? "—";
   const [open, setOpen] = useState(false);
+  const initials = (displayName || "P").trim().slice(0, 2).toUpperCase();
   return (
     <div>
       <div className="hud-bar">
@@ -106,9 +107,33 @@ function TopHud() {
         <div className="panel px-3 py-2 mt-2">
           <div className="panel-title">Settings</div>
           {authed ? (
-            <button className="btn-ghost mt-2 w-full" onClick={() => supabase.auth.signOut()}>
-              Log Out
-            </button>
+            <>
+              <div className="profile-card mt-2">
+                <div className="profile-avatar">{initials}</div>
+                <div className="profile-main">
+                  <div className="profile-name">{displayName || "Player"}</div>
+                  <div className="profile-email">{userEmail ?? "No email"}</div>
+                </div>
+                <div className="profile-chip-pill">🪙 {balance}</div>
+              </div>
+              <div className="profile-stats mt-2">
+                <div className="profile-stat">
+                  <div className="profile-stat-label">User ID</div>
+                  <div className="profile-stat-value">{(userId ?? "—").slice(0, 8)}</div>
+                </div>
+                <div className="profile-stat">
+                  <div className="profile-stat-label">Room</div>
+                  <div className="profile-stat-value">{roomCode}</div>
+                </div>
+                <div className="profile-stat">
+                  <div className="profile-stat-label">Status</div>
+                  <div className="profile-stat-value">{room ? "In Match" : "Lobby"}</div>
+                </div>
+              </div>
+              <button className="btn-ghost mt-2 w-full" onClick={() => supabase.auth.signOut()}>
+                Log Out
+              </button>
+            </>
           ) : (
             <div className="panel-subtle mt-2">Sign in to access settings.</div>
           )}
