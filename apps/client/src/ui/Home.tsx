@@ -54,6 +54,10 @@ export function Home() {
       const devBase = `${window.location.origin}${import.meta.env.BASE_URL}`;
       return devBase.endsWith("/") ? devBase : `${devBase}/`;
     }
+    // For GitHub Pages project sites, force the repository subpath to avoid root-domain fallback.
+    if (window.location.hostname.endsWith("github.io")) {
+      return `https://${window.location.hostname}/pocketparlour/`;
+    }
     const configured = import.meta.env.VITE_AUTH_REDIRECT_URL?.trim();
     if (configured) return configured.endsWith("/") ? configured : `${configured}/`;
     const base = `${window.location.origin}${import.meta.env.BASE_URL}`;
@@ -305,9 +309,7 @@ export function Home() {
             className="btn-google auth-google"
             onClick={async () => {
               setAuthError(null);
-              if (import.meta.env.DEV) {
-                console.info("[oauth] redirectTo:", oauthRedirectTo);
-              }
+              console.info("[oauth] redirectTo:", oauthRedirectTo);
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: { redirectTo: oauthRedirectTo }
