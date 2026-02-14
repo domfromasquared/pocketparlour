@@ -20,70 +20,104 @@ export function BlackjackTable() {
           ? "Push"
           : lastResult?.outcome === "cancelled"
             ? "Cancelled"
-            : "";
+          : "";
 
   return (
-    <div className="h-full w-full flex flex-col">
-      <div className="table-wood flex-1 min-h-0 p-2 relative">
-        <div className="table-felt relative h-full w-full p-2">
-          <div className="table-center">
-            <div className="panel px-3 py-2">
-              <div className="panel-title text-center">Blackjack</div>
-              <div className="panel-subtle text-center">Dealer stands on soft 17</div>
-            </div>
-          </div>
-
-          <div className="seat seat-top">
-            <div className="seat-badge">Dealer</div>
-            <div className="hand-row">
-              <CardFace label={dealerUp ? dealerUp : "??"} />
-              {Array.from({ length: Math.max(0, dealerCount - 1) }).map((_, i) => (
-                <CardBack key={i} />
-              ))}
-            </div>
-          </div>
-
-          <div className="seat seat-bottom">
-            <div className="seat-badge badge-glow">You</div>
-            <div className="panel-subtle">
-              Total {publicState?.playerTotal ?? 0} {publicState?.playerSoft ? "(soft)" : ""}
-            </div>
-            <div className="hand-row tight">
-              {(publicState?.playerCards ?? []).map((c: string, i: number) => (
-                <CardFace key={i} label={c} />
-              ))}
-            </div>
-          </div>
+    <div className="bj-root">
+      <div className="panel bj-header">
+        <div className="panel-title">Blackjack</div>
+        <div className="panel-subtle">
+          {publicState?.phase === "playerTurn" ? "Your Turn" : publicState?.phase === "dealerTurn" ? "Dealer Turn" : "Settled"}
         </div>
+      </div>
 
-        {lastResult && (
-          <div className="absolute inset-0 grid place-items-center bg-black/60">
-            <div className="panel px-4 py-3 text-center max-w-[240px]">
-              <div className="text-lg font-black text-shadow">{outcomeLabel}</div>
-              <div className="panel-subtle mt-1">Delta: {lastResult.delta}</div>
-              <div className="panel-subtle">Balance: {lastResult.newBalance}</div>
-              <div className="flex items-center justify-center gap-2 mt-3">
-                <button
-                  className="btn-green"
-                  onClick={() => {
-                    clearLastResult();
-                    socket?.emit("evt", { type: "room:next" });
-                  }}
-                >
-                  Play Again
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => {
-                    clearLastResult();
-                  }}
-                >
-                  Close
-                </button>
+      <div className="bj-content">
+        <div className="table-wood bj-stage-wrap">
+          <div className="table-felt bj-layout">
+            <div className="table-center">
+              <div className="panel px-3 py-2">
+                <div className="panel-title text-center">Blackjack</div>
+                <div className="panel-subtle text-center">Dealer stands on soft 17</div>
+              </div>
+            </div>
+
+            <div className="bj-dealer-seat">
+              <div className="seat-badge">Dealer</div>
+              <div className="hand-row">
+                <CardFace label={dealerUp ? dealerUp : "??"} />
+                {Array.from({ length: Math.max(0, dealerCount - 1) }).map((_, i) => (
+                  <CardBack key={i} />
+                ))}
+              </div>
+            </div>
+
+            <div className="bj-side-col bj-side-left">
+              <OpponentSeat name="CPU 1" />
+              <OpponentSeat name="CPU 2" />
+            </div>
+
+            <div className="bj-side-col bj-side-right">
+              <OpponentSeat name="CPU 3" />
+              <OpponentSeat name="CPU 4" />
+            </div>
+
+            <div className="bj-player-seat">
+              <div className="seat-badge badge-glow">You</div>
+              <div className="panel-subtle">
+                Total {publicState?.playerTotal ?? 0} {publicState?.playerSoft ? "(soft)" : ""}
+              </div>
+              <div className="bj-hand-bottom">
+                {(publicState?.playerCards ?? []).map((c: string, i: number) => (
+                  <div key={i} className="bj-player-card-wrap" style={{ zIndex: i + 1 }}>
+                    <CardFace label={c} />
+                  </div>
+                ))}
               </div>
             </div>
           </div>
-        )}
+
+          {lastResult && (
+            <div className="absolute inset-0 grid place-items-center bg-black/60">
+              <div className="panel px-4 py-3 text-center max-w-[240px]">
+                <div className="text-lg font-black text-shadow">{outcomeLabel}</div>
+                <div className="panel-subtle mt-1">Delta: {lastResult.delta}</div>
+                <div className="panel-subtle">Balance: {lastResult.newBalance}</div>
+                <div className="flex items-center justify-center gap-2 mt-3">
+                  <button
+                    className="btn-green"
+                    onClick={() => {
+                      clearLastResult();
+                      socket?.emit("evt", { type: "room:next" });
+                    }}
+                  >
+                    Play Again
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => {
+                      clearLastResult();
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OpponentSeat({ name }: { name: string }) {
+  return (
+    <div className="bj-opp-seat">
+      <div className="seat-badge">{name}</div>
+      <div className="bj-side-stack">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <CardBack key={i} />
+        ))}
       </div>
     </div>
   );

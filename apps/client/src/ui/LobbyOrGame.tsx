@@ -7,7 +7,7 @@ import { SpadesTable } from "./games/SpadesTable";
 import { HoldemTable } from "./games/HoldemTable";
 
 export function LobbyOrGame() {
-  const { room } = useApp();
+  const { room, youSeatIndex } = useApp();
   if (!room) return null;
 
   const leave = () => {
@@ -16,6 +16,7 @@ export function LobbyOrGame() {
 
   const isActive = room.status === "active";
   const isEnded = room.status === "ended";
+  const queued = youSeatIndex === -1;
 
   return (
     <div className="screen">
@@ -25,6 +26,11 @@ export function LobbyOrGame() {
             <div className="panel-title">Game</div>
             <div className="text-lg font-black capitalize text-shadow">{room.gameKey.replace("_", " ")}</div>
             <div className="panel-subtle">Stake: {room.stakeAmount}</div>
+            {queued && (
+              <div className="queue-badge mt-1">
+                Queued for next seat {room.waitingCount > 0 ? `(${room.waitingCount} waiting)` : ""}
+              </div>
+            )}
           </div>
           <button className="start-btn start-btn-join game-top-btn" onClick={leave}>Exit</button>
         </div>

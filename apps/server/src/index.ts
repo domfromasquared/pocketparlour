@@ -265,6 +265,7 @@ io.on("connection", async (socketRaw) => {
         prepareNextHand(room);
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
         await maybeStartGame(room, emitToRoom);
+        if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
 

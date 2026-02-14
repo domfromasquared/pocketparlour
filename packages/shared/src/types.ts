@@ -33,6 +33,7 @@ export type RoomSummary = {
   stakeAmount: string; // bigint as string
   turnMs: number; // default 20000
   seats: Seat[];
+  waitingCount: number;
 };
 
 export type AuthedUser = {

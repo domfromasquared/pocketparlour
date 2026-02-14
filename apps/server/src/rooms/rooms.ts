@@ -49,7 +49,8 @@ export function toSummary(r: Room): RoomSummary {
     createdAt: r.createdAt,
     stakeAmount: r.stakeAmount.toString(),
     turnMs: r.turnMs,
-    seats: r.seats
+    seats: r.seats,
+    waitingCount: r.waitingQueue?.length ?? 0
   };
 }
 
@@ -116,16 +117,19 @@ export function joinRoom(room: Room, sock: SocketWithUser): { seatIndex: number 
     return { seatIndex: existing.seatIndex };
   }
 
-  if (room.gameKey === "holdem" && room.status === "active") {
-    room.waitingQueue ??= [];
-    if (!room.waitingQueue.some(q => q.userId === sock.data.userId)) {
-      room.waitingQueue.push({ userId: sock.data.userId, displayName: sock.data.displayName });
-    }
+  if ((room.gameKey === "holdem" || room.gameKey === "blackjack" || room.gameKey === "spades") && room.status === "active") {
+    enqueueWaitingPlayer(room, sock.data.userId, sock.data.displayName);
     return { seatIndex: -1 };
   }
 
   const empty = room.seats.find(s => !s.userId);
-  if (!empty) throw new Error("Room full");
+  if (!empty) {
+    if (room.gameKey === "blackjack" || room.gameKey === "holdem" || room.gameKey === "spades") {
+      enqueueWaitingPlayer(room, sock.data.userId, sock.data.displayName);
+      return { seatIndex: -1 };
+    }
+    throw new Error("Room full");
+  }
   empty.userId = sock.data.userId;
   empty.displayName = sock.data.displayName;
   empty.isBot = false;
@@ -133,8 +137,19 @@ export function joinRoom(room: Room, sock: SocketWithUser): { seatIndex: number 
   return { seatIndex: empty.seatIndex };
 }
 
+function enqueueWaitingPlayer(room: Room, userId: string, displayName: string) {
+  room.waitingQueue ??= [];
+  const alreadyQueued = room.waitingQueue.some(q => q.userId === userId);
+  if (!alreadyQueued) {
+    room.waitingQueue.push({ userId, displayName });
+  }
+}
+
 export function leaveRoom(room: Room, userId: string) {
   room.conns.delete(userId);
+  if (room.waitingQueue?.length) {
+    room.waitingQueue = room.waitingQueue.filter(q => q.userId !== userId);
+  }
   const seat = room.seats.find(s => s.userId === userId);
   if (seat) {
     seat.userId = undefined;
@@ -159,15 +174,60 @@ function allHumansReady(room: Room): boolean {
 }
 
 export function prepareNextHand(room: Room) {
-  if (room.gameKey !== "blackjack") return;
-  room.status = "lobby";
-  room.matchId = null;
-  room.bjState = undefined;
-  room.turnDeadline = undefined;
-  room.rngSeed = Math.floor(Math.random() * 1_000_000_000);
-  for (const seat of room.seats) {
-    if (seat.userId && !seat.isBot) seat.ready = true;
+  if (room.gameKey === "blackjack") {
+    room.status = "lobby";
+    room.matchId = null;
+    room.bjState = undefined;
+    room.turnDeadline = undefined;
+    room.rngSeed = Math.floor(Math.random() * 1_000_000_000);
+    applyBlackjackQueue(room);
+    for (const seat of room.seats) {
+      if (seat.userId && !seat.isBot) seat.ready = true;
+    }
+    return;
   }
+
+  if (room.gameKey === "spades") {
+    room.status = "lobby";
+    room.matchId = null;
+    room.spadesState = undefined;
+    room.turnDeadline = undefined;
+    room.rngSeed = Math.floor(Math.random() * 1_000_000_000);
+    seatQueuedPlayers(room);
+    for (const seat of room.seats) {
+      if (seat.userId && !seat.isBot) seat.ready = true;
+    }
+  }
+}
+
+function applyBlackjackQueue(room: Room) {
+  if (room.gameKey !== "blackjack") return;
+  const queue = room.waitingQueue ?? [];
+  if (queue.length === 0) return;
+  const seat = room.seats[0];
+  if (!seat) return;
+
+  const currentUserId = seat.userId;
+  const currentDisplayName = seat.displayName;
+  const next = queue.shift();
+  if (!next) return;
+
+  seat.userId = next.userId;
+  seat.displayName = next.displayName;
+  seat.isBot = false;
+  seat.botDifficulty = undefined;
+  seat.ready = true;
+
+  if (
+    currentUserId &&
+    !currentUserId.startsWith("bot:") &&
+    currentUserId !== next.userId &&
+    !queue.some(q => q.userId === currentUserId)
+  ) {
+    queue.push({ userId: currentUserId, displayName: currentDisplayName });
+  }
+
+  room.waitingQueue = queue;
 }
 
 function fillBots(room: Room) {
@@ -349,7 +409,7 @@ export async function maybeStartGame(room: Room, ioEmitRoom: (roomId: string, ev
 }
 
 export function seatQueuedPlayers(room: Room) {
-  if (room.gameKey !== "holdem") return;
+  if (room.gameKey !== "holdem" && room.gameKey !== "spades") return;
   // Clear bots so humans can take seats next hand
   for (const seat of room.seats) {
     if (seat.isBot) {

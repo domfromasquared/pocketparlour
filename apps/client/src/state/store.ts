@@ -59,7 +59,12 @@ export const useApp = create<AppState>((set, get) => ({
     if (e.type === "wallet:balance") set({ balance: e.balance });
     if (e.type === "room:joined") set({ room: e.room, youSeatIndex: e.youSeatIndex, lastResult: null });
     if (e.type === "room:left") set({ room: null, youSeatIndex: null, publicState: null, lastResult: null });
-    if (e.type === "room:update") set({ room: e.room });
+    if (e.type === "room:update") {
+      const currentUserId = get().userId;
+      const computedSeat =
+        currentUserId ? e.room.seats.find(s => s.userId === currentUserId)?.seatIndex ?? -1 : get().youSeatIndex;
+      set({ room: e.room, youSeatIndex: computedSeat });
+    }
     if (e.type === "game:state") set({ publicState: e.publicState });
     if (e.type === "game:ended") {
       set({ balance: e.result.newBalance, lastResult: e.result });
