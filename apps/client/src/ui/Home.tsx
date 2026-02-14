@@ -20,8 +20,6 @@ export function Home() {
   const {
     selectedGame,
     setSelectedGame,
-    displayName,
-    setDisplayName,
     stakeAmount,
     setStakeAmount,
     authed,
@@ -39,9 +37,11 @@ export function Home() {
   const [spinPrize, setSpinPrize] = useState<number | null>(null);
   const [spinError, setSpinError] = useState<string | null>(null);
   const [spinPrizes, setSpinPrizes] = useState<number[]>([]);
+  const [showSpinWin, setShowSpinWin] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [wheelAngle, setWheelAngle] = useState(0);
   const spinAnimRef = useRef<number | null>(null);
+  const spinWinTimerRef = useRef<number | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const [showGameModal, setShowGameModal] = useState(false);
   const devLoginEmail = import.meta.env.VITE_DEV_LOGIN_EMAIL ?? "admin@pocketparlour.local";
@@ -191,7 +191,8 @@ export function Home() {
     return () => ro.disconnect();
   }, [spinPrizes, wheelAngle]);
 
-  const spinToPrize = (prize: number) => {
+  const spinToPrize = (prize: number) =>
+    new Promise<void>((resolve) => {
     const segments = spinPrizes.length || 24;
     const index = Math.max(0, spinPrizes.indexOf(prize));
     const segmentAngle = (2 * Math.PI) / segments;
@@ -207,22 +208,85 @@ export function Home() {
       const ease = 1 - Math.pow(1 - p, 3);
       const angle = start + (end - start) * ease;
       setWheelAngle(angle);
-      if (p < 1) spinAnimRef.current = requestAnimationFrame(tick);
+      if (p < 1) {
+        spinAnimRef.current = requestAnimationFrame(tick);
+      } else {
+        resolve();
+      }
     };
     spinAnimRef.current = requestAnimationFrame(tick);
+  });
+
+  const spinNow = async () => {
+    if (!authed || spinLoading || !spinAvailable) return;
+    setSpinLoading(true);
+    setSpinError(null);
+    setSpinPrize(null);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error("Not logged in");
+      const res = await fetch(`${serverUrl}/daily-spin`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Spin failed");
+      }
+      if (typeof data?.prize === "number") {
+        await spinToPrize(data.prize);
+        setSpinPrize(data.prize);
+        setShowSpinWin(true);
+        if (spinWinTimerRef.current) window.clearTimeout(spinWinTimerRef.current);
+        spinWinTimerRef.current = window.setTimeout(() => setShowSpinWin(false), 1600);
+      }
+      if (typeof data?.newBalance === "string") setBalance(data.newBalance);
+      setNextSpinAt(data?.nextAvailableAt ?? null);
+      setSpinAvailable(false);
+    } catch (err) {
+      setSpinError(err instanceof Error ? err.message : "Spin failed");
+    } finally {
+      setSpinLoading(false);
+    }
   };
+
+  useEffect(() => {
+    return () => {
+      if (spinAnimRef.current) cancelAnimationFrame(spinAnimRef.current);
+      if (spinWinTimerRef.current) window.clearTimeout(spinWinTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="screen">
       {authed && (
         <div className="panel px-3 py-2 spin-panel">
           <div className="panel-title">Daily Spin</div>
+          <button
+            className="spin-cta-btn"
+            onClick={spinNow}
+            disabled={!spinAvailable || spinLoading}
+          >
+            {spinLoading ? "Spinning..." : "Spin"}
+          </button>
           <div className="wheel-wrap">
             <canvas ref={canvasRef} />
             <div className="wheel-pointer" />
           </div>
-          <div className="panel-subtle mt-2">
-            {spinAvailable ? "Free spin ready" : `Next free spin in ${remaining}`}
+          <div className={`panel-subtle mt-2 ${spinAvailable ? "spin-ready-badge" : ""}`}>
+            {spinAvailable ? "FREE SPIN READY!" : `Next free spin in ${remaining}`}
+          </div>
+          {spinError && <div className="panel-subtle mt-1">{spinError}</div>}
+        </div>
+      )}
+
+      {showSpinWin && spinPrize != null && (
+        <div className="spin-win-overlay" aria-live="polite">
+          <div className="spin-win-card">
+            <div className="spin-win-title">YOU WON</div>
+            <div className="spin-win-prize">{spinPrize.toLocaleString()}</div>
           </div>
         </div>
       )}
@@ -325,23 +389,7 @@ export function Home() {
         </div>
       )}
 
-      <div className="panel px-3 py-2 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="panel-title">Player</div>
-          <div className="text-lg font-black tracking-wide truncate text-shadow">{displayName}</div>
-          <div className="panel-subtle">Edit name (shown in rooms)</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            className="input-field w-32 focus:glow-ring"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value.slice(0, 16))}
-            aria-label="Display name"
-          />
-        </div>
-      </div>
-
-      <div className={`panel flex-1 min-h-0 p-2 flex flex-col gap-2 ${!authed ? "opacity-50 pointer-events-none" : ""}`}>
+      <div className={`panel choose-game-panel flex-1 min-h-0 p-2 flex flex-col gap-2 ${!authed ? "opacity-50 pointer-events-none" : ""}`}>
         <div className="flex items-center justify-between">
           <div className="panel-title">Choose Your Game</div>
           <div className="panel-subtle">CPU fills missing seats</div>
@@ -368,26 +416,28 @@ export function Home() {
 
       {showGameModal && authed && (
         <div className="modal-backdrop" onClick={() => setShowGameModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
+          <div className="modal start-game-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="start-game-head">
               <div>
                 <div className="panel-title">Start Game</div>
-                <div className="text-lg font-black tracking-wide">{selectedGame.replace("_", " ")}</div>
+                <div className="start-game-name">{selectedGame.replace("_", " ")}</div>
               </div>
-              <button className="btn-ghost" onClick={() => setShowGameModal(false)}>✕</button>
+              <button className="start-game-close" onClick={() => setShowGameModal(false)} aria-label="Close start game">
+                ✕
+              </button>
             </div>
 
-            <div className="panel-subtle mt-2">Join by code (optional)</div>
+            <div className="start-game-subtle">Join by code (optional)</div>
             <input
-              className="input-field uppercase w-full mt-1"
+              className="input-field uppercase w-full start-game-code-input"
               value={roomCode}
               onChange={(e) => setRoomCode(e.target.value.toUpperCase().slice(0, 8))}
               placeholder="ABCDE"
             />
 
-            <div className="grid grid-cols-3 gap-2 mt-3">
+            <div className="start-game-actions">
               <button
-                className="btn-blue"
+                className="start-btn start-btn-auto"
                 onClick={async () => {
                   await auto();
                   setShowGameModal(false);
@@ -396,7 +446,7 @@ export function Home() {
                 Auto
               </button>
               <button
-                className="btn-green"
+                className="start-btn start-btn-create"
                 onClick={async () => {
                   await create();
                   setShowGameModal(false);
@@ -405,7 +455,7 @@ export function Home() {
                 Create
               </button>
               <button
-                className="btn-gold"
+                className="start-btn start-btn-join"
                 onClick={async () => {
                   await join();
                   setShowGameModal(false);

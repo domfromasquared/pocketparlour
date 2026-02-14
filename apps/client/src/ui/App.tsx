@@ -83,7 +83,7 @@ function Loading() {
 }
 
 function TopHud() {
-  const { balance, room, displayName, authed, userEmail, userId } = useApp();
+  const { balance, room, displayName, setDisplayName, authed, userEmail, userId } = useApp();
   const roomCode = room?.roomCode ?? "—";
   const [open, setOpen] = useState(false);
   const initials = (displayName || "P").trim().slice(0, 2).toUpperCase();
@@ -104,7 +104,7 @@ function TopHud() {
         </div>
       </div>
       {open && (
-        <div className="panel px-3 py-2 mt-2">
+        <div className="panel settings-panel mt-2">
           <div className="panel-title">Settings</div>
           {authed ? (
             <>
@@ -113,6 +113,13 @@ function TopHud() {
                 <div className="profile-main">
                   <div className="profile-name">{displayName || "Player"}</div>
                   <div className="profile-email">{userEmail ?? "No email"}</div>
+                  <input
+                    className="input-field settings-name-input mt-2"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value.slice(0, 16))}
+                    aria-label="Display name"
+                    placeholder="Player name"
+                  />
                 </div>
                 <div className="profile-chip-pill">🪙 {balance}</div>
               </div>
@@ -130,7 +137,7 @@ function TopHud() {
                   <div className="profile-stat-value">{room ? "In Match" : "Lobby"}</div>
                 </div>
               </div>
-              <button className="btn-ghost mt-2 w-full" onClick={() => supabase.auth.signOut()}>
+              <button className="settings-logout-btn mt-2" onClick={() => supabase.auth.signOut()}>
                 Log Out
               </button>
             </>

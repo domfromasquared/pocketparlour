@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state/store";
 import { getSocket } from "../../lib/socket";
 import { cardLabelToAssetUrl, CARD_BACK_2 } from "../assets/cardAssets";
@@ -14,6 +14,8 @@ export function SpadesTable() {
   const isYourTurn = turnPlayerId && userId && turnPlayerId === userId;
 
   const trickPlays: { playerId: string; card: string }[] = publicState?.trick?.plays ?? [];
+  const trickHistory: { winnerId: string; plays: { playerId: string; card: string }[] }[] =
+    publicState?.trickHistory ?? [];
 
   const canBid = phase === "bidding" && isYourTurn;
   const canPlay = phase === "playing" && isYourTurn;
@@ -26,19 +28,11 @@ export function SpadesTable() {
   const team1Tricks = room?.seats
     .filter(s => s.seatIndex % 2 === 1)
     .reduce((sum, s) => sum + (publicState?.tricksWon?.[s.userId ?? ""] ?? 0), 0);
-  const winnerTeam =
-    phase === "settled"
-      ? publicState?.teamScores?.team0 === publicState?.teamScores?.team1
-        ? "Tie"
-        : publicState?.teamScores?.team0 > publicState?.teamScores?.team1
-          ? "Team A"
-          : "Team B"
-      : null;
-
   const seats = room?.seats ?? [];
   const totalSeats = Math.max(1, Math.min(4, seats.length || 4));
   const myIndex =
     (youSeatIndex != null ? youSeatIndex : seats.find(s => s.userId === userId)?.seatIndex) ?? 0;
+  const myTeamParity = myIndex % 2;
 
   const relFromSeatIndex = (seatIndex: number) =>
     (seatIndex - myIndex + totalSeats) % totalSeats;
@@ -87,6 +81,64 @@ export function SpadesTable() {
     return seatClassForRel(rel);
   };
 
+  const yourTeamTricksRaw = myTeamParity === 0 ? team0Tricks : team1Tricks;
+  const opponentTeamTricksRaw = myTeamParity === 0 ? team1Tricks : team0Tricks;
+
+  const [displayTrickPlays, setDisplayTrickPlays] = useState<{ playerId: string; card: string }[]>(trickPlays);
+  const [displayYourTeamTricks, setDisplayYourTeamTricks] = useState(yourTeamTricksRaw);
+  const [displayOpponentTricks, setDisplayOpponentTricks] = useState(opponentTeamTricksRaw);
+  const prevHistoryLen = useRef(trickHistory.length);
+  const trickDelayTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    const trickJustCompleted = trickHistory.length > prevHistoryLen.current && trickPlays.length === 0;
+    prevHistoryLen.current = trickHistory.length;
+
+    if (trickJustCompleted) {
+      const lastTrick = trickHistory[trickHistory.length - 1]?.plays ?? [];
+      setDisplayTrickPlays(lastTrick);
+      if (trickDelayTimer.current) window.clearTimeout(trickDelayTimer.current);
+      trickDelayTimer.current = window.setTimeout(() => {
+        setDisplayTrickPlays([]);
+        setDisplayYourTeamTricks(yourTeamTricksRaw);
+        setDisplayOpponentTricks(opponentTeamTricksRaw);
+      }, 2400);
+      return;
+    }
+
+    if (trickPlays.length > 0) {
+      if (trickDelayTimer.current) {
+        window.clearTimeout(trickDelayTimer.current);
+        trickDelayTimer.current = null;
+      }
+      setDisplayTrickPlays(trickPlays);
+      setDisplayYourTeamTricks(yourTeamTricksRaw);
+      setDisplayOpponentTricks(opponentTeamTricksRaw);
+      return;
+    }
+
+    if (!trickDelayTimer.current) {
+      setDisplayTrickPlays([]);
+      setDisplayYourTeamTricks(yourTeamTricksRaw);
+      setDisplayOpponentTricks(opponentTeamTricksRaw);
+    }
+  }, [trickPlays, trickHistory, yourTeamTricksRaw, opponentTeamTricksRaw]);
+
+  useEffect(() => {
+    return () => {
+      if (trickDelayTimer.current) window.clearTimeout(trickDelayTimer.current);
+    };
+  }, []);
+
+  const winnerLabel =
+    phase === "settled"
+      ? publicState?.teamScores?.team0 === publicState?.teamScores?.team1
+        ? "Tie"
+        : (publicState?.teamScores?.team0 ?? 0) > (publicState?.teamScores?.team1 ?? 0)
+          ? (myTeamParity === 0 ? "Your Team" : "Opponents")
+          : (myTeamParity === 1 ? "Your Team" : "Opponents")
+      : null;
+
   return (
     <div className="spades-root">
       <div className="panel spades-header">
@@ -100,8 +152,8 @@ export function SpadesTable() {
         <div className="table-wood spades-stage-wrap">
           <div className="table-felt spades-layout">
             <div className="spades-table-center">
-              {trickPlays.length === 0 && <div className="panel-subtle">No cards played yet</div>}
-              {trickPlays.map((p, i) => {
+              {displayTrickPlays.length === 0 && <div className="panel-subtle">No cards played yet</div>}
+              {displayTrickPlays.map((p, i) => {
                 const seatIndex = seatByPlayerId.get(p.playerId);
                 const rel = seatIndex == null ? 0 : relFromSeatIndex(seatIndex);
                 return (
@@ -130,7 +182,8 @@ export function SpadesTable() {
                         {sortedHand.slice(0, 13).map((c, i) => (
                           <button
                             key={`${c}-${i}`}
-                            className="rounded-xl border border-white/10 hover:glow-ring"
+                            className="spades-player-card-btn"
+                            style={{ zIndex: i + 1 }}
                             onClick={() =>
                               canPlay && socket?.emit("evt", { type: "game:action", action: { type: "spades:play", card: c } })
                             }
@@ -155,9 +208,9 @@ export function SpadesTable() {
         </div>
 
         <div className="panel spades-meta-row">
-          <div className="panel-subtle">Team A tricks: {team0Tricks}</div>
-          <div className="panel-subtle">Team B tricks: {team1Tricks}</div>
-          {winnerTeam && <div className="panel-subtle">Winner: {winnerTeam}</div>}
+          <div className="panel-subtle">Your team tricks: {displayYourTeamTricks}</div>
+          <div className="panel-subtle">Opponent tricks: {displayOpponentTricks}</div>
+          {winnerLabel && <div className="panel-subtle">Winner: {winnerLabel}</div>}
         </div>
 
         <div className="panel spades-bid-row">
@@ -181,6 +234,26 @@ export function SpadesTable() {
             </button>
           </div>
         </div>
+
+        {phase === "settled" && (
+          <div className="panel spades-end-row">
+            <div className="panel-title">Round Complete</div>
+            <div className="spades-end-actions">
+              <button
+                className="start-btn start-btn-create spades-end-btn"
+                onClick={() => socket?.emit("evt", { type: "room:next" })}
+              >
+                Play Again
+              </button>
+              <button
+                className="start-btn start-btn-join spades-end-btn"
+                onClick={() => socket?.emit("evt", { type: "room:leave" })}
+              >
+                Exit Lobby
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

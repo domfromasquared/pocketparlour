@@ -26,7 +26,7 @@ export function LobbyOrGame() {
             <div className="text-lg font-black capitalize text-shadow">{room.gameKey.replace("_", " ")}</div>
             <div className="panel-subtle">Stake: {room.stakeAmount}</div>
           </div>
-          <button className="btn-red" onClick={leave}>Exit</button>
+          <button className="start-btn start-btn-join game-top-btn" onClick={leave}>Exit</button>
         </div>
       </div>
 
@@ -59,17 +59,29 @@ function Lobby() {
     (youSeatIndex != null ? room?.seats.find(s => s.seatIndex === youSeatIndex) : undefined) ??
     (userId ? room?.seats.find(s => s.userId === userId) : undefined);
   const isReady = mySeat?.ready ?? false;
+  const seatsOrdered = useMemo(() => {
+    const list = room?.seats.slice() ?? [];
+    return list.sort((a, b) => {
+      if (a.userId === userId) return -1;
+      if (b.userId === userId) return 1;
+      return a.seatIndex - b.seatIndex;
+    });
+  }, [room?.seats, userId]);
+
   return (
     <div className="h-full flex flex-col">
       <div className="panel-title px-2 py-1">Seats</div>
-      <div className="grid grid-cols-1 gap-2 px-2 pb-2 overflow-hidden">
-        {room?.seats.map((s) => (
-          <div key={s.seatIndex} className="panel p-3 flex items-center justify-between">
-            <div className="font-semibold">
+      <div className="lobby-seats-row px-2 pb-2">
+        {seatsOrdered.map((s) => (
+          <div
+            key={s.seatIndex}
+            className={`lobby-seat-pill ${s.userId === userId ? "is-you" : ""} ${s.ready ? "is-ready" : ""}`}
+          >
+            <div className="lobby-seat-name">
               {s.displayName} {s.isBot ? "🤖" : ""}
             </div>
             <div className="panel-subtle">
-              Seat {s.seatIndex + 1} {s.ready ? "• Ready" : ""}
+              Seat {s.seatIndex + 1}
             </div>
           </div>
         ))}
@@ -79,7 +91,7 @@ function Lobby() {
         <div className="panel-subtle">Auto-start when all players are ready.</div>
         {mySeat && !mySeat.isBot && (
           <button
-            className={isReady ? "btn-ghost" : "btn-green"}
+            className={`start-btn game-ready-btn ${isReady ? "start-btn-join" : "start-btn-create"}`}
             onClick={() => socket?.emit("evt", { type: "room:ready", ready: !isReady })}
           >
             {isReady ? "Unready" : "Ready"}
