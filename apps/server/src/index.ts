@@ -33,9 +33,12 @@ import { pool } from "./db.js";
 import { getBalance } from "./economy/economy.js";
 
 const app = Fastify({ logger: true });
+const allowedOrigins = env.PUBLIC_ORIGIN.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 await app.register(cors, {
-  origin: [env.PUBLIC_ORIGIN],
+  origin: allowedOrigins,
   credentials: true
 });
 
@@ -109,7 +112,7 @@ app.post("/daily-spin", async (req, reply) => {
 const httpServer = app.server;
 
 const io = new Server(httpServer, {
-  cors: { origin: [env.PUBLIC_ORIGIN], credentials: true },
+  cors: { origin: allowedOrigins, credentials: true },
   transports: ["websocket"]
 });
 

@@ -307,7 +307,10 @@ export function Home() {
               console.info("[oauth] redirectTo:", oauthRedirectTo);
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
-                options: { redirectTo: oauthRedirectTo }
+                options: {
+                  redirectTo: oauthRedirectTo,
+                  queryParams: { prompt: "select_account" }
+                }
               });
               if (error) setAuthError(error.message);
             }}

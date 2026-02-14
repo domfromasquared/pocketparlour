@@ -13,7 +13,7 @@ services:
       - key: PORT
         value: 10000
       - key: PUBLIC_ORIGIN
-        value: https://your-client-domain.example
+        value: https://domfromasquared.github.io
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
