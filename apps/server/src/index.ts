@@ -56,6 +56,13 @@ function msUntilNextSpin(lastSpinAt: Date | null, now = new Date()): number {
   return Math.max(0, next.getTime() - now.getTime());
 }
 
+function spinDayUTC(now = new Date()): string {
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 async function getLastSpinAt(userId: string): Promise<Date | null> {
   const res = await pool.query(
     `select created_at from ledger_transactions
@@ -93,14 +100,20 @@ app.post("/daily-spin", async (req, reply) => {
     return reply.status(429).send({ error: "Not ready", nextAvailableAt });
   }
 
-  const prize = DAILY_SPIN_PRIZES[Math.floor(Math.random() * DAILY_SPIN_PRIZES.length)];
-  const newBalance = await grantReward({
-    userId: verified.userId,
-    amount: BigInt(prize),
-    gameKey: "blackjack",
-    idempotencyKey: `daily_spin:${verified.userId}:${Date.now()}`,
-    metadata: { source: "daily_spin", prize }
-  });
+  const now = new Date();
+const day = spinDayUTC(now);
+
+// deterministic per-user-per-day idempotency
+const idempotencyKey = `daily_spin:${verified.userId}:${day}`;
+
+const prize = DAILY_SPIN_PRIZES[Math.floor(Math.random() * DAILY_SPIN_PRIZES.length)];
+const newBalance = await grantReward({
+  userId: verified.userId,
+  amount: BigInt(prize),
+  gameKey: "blackjack",
+  idempotencyKey,
+  metadata: { source: "daily_spin", prize, spin_day: day }
+});
 
   return {
     prize,
