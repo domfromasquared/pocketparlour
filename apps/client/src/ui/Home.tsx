@@ -75,22 +75,27 @@ export function Home() {
   };
 
   const fetchSpinStatus = async () => {
-    if (!authed) return;
-    const session = (await supabase.auth.getSession()).data.session;
-    if (!session) return;
-    const res = await fetch(`${serverUrl}/daily-spin`, {
-      headers: { Authorization: `Bearer ${session.access_token}` }
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    setSpinAvailable(!!data.available);
-    setNextSpinAt(data.nextAvailableAt ?? null);
-    if (Array.isArray(data.prizes)) setSpinPrizes(data.prizes);
+    if (!authed || !serverUrl) return;
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) return;
+      const res = await fetch(`${serverUrl}/daily-spin`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setSpinAvailable(!!data.available);
+      setNextSpinAt(data.nextAvailableAt ?? null);
+      if (Array.isArray(data.prizes)) setSpinPrizes(data.prizes);
+    } catch {
+      // Keep home usable if API is temporarily unreachable.
+      setSpinAvailable(false);
+    }
   };
 
   useEffect(() => {
     fetchSpinStatus();
-  }, [authed]);
+  }, [authed, serverUrl]);
 
   useEffect(() => {
     if (!nextSpinAt) return;
