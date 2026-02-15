@@ -5,7 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import { Server } from "socket.io";
 import { env } from "./env.js";
 import { verifySupabaseJwt } from "./supabase.js";
-import { ClientToServerEventSchema, type ServerToClientEvent, holdemPlugin } from "@versus/shared";
+import { ClientToServerEventSchema, type ServerToClientEvent, blackjackPlugin, holdemPlugin } from "@versus/shared";
 import {
   applyBlackjackAction,
   applyHoldemAction,
@@ -132,12 +132,25 @@ io.use(async (socket, next) => {
 function emitToRoom(roomId: string, evt: ServerToClientEvent) {
   io.to(roomId).emit("evt", evt);
 }
+function emitToSocket(socketId: string, evt: ServerToClientEvent) {
+  io.to(socketId).emit("evt", evt);
+}
 
 function emitSpadesState(room: any) {
   for (const conn of room.conns.values()) {
     const pub = buildSpadesPublicState(room, conn.userId);
     if (!pub) continue;
     io.to(conn.socketId).emit("evt", { type: "game:state", publicState: pub });
+  }
+}
+
+function emitBlackjackState(room: any) {
+  if (!room.bjState) return;
+  for (const conn of room.conns.values()) {
+    const sock = io.sockets.sockets.get(conn.socketId);
+    if (!sock) continue;
+    const pub = blackjackPlugin.getPublicState(room.bjState, conn.userId);
+    sock.emit("evt", { type: "game:state", publicState: pub });
   }
 }
 
@@ -170,8 +183,6 @@ async function emitHoldemResults(room: any) {
   room.turnDeadline = undefined;
   seatQueuedPlayers(room);
   emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-  await maybeStartGame(room, emitToRoom);
-  if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
 }
 
 const socketRoom = new Map<string, string>(); // socket.id -> roomId
@@ -210,7 +221,10 @@ io.on("connection", async (socketRaw) => {
         socketRoom.set(socket.id, room.roomId);
         socket.emit("evt", { type: "room:joined", room: toSummary(room), youSeatIndex: seatIndex });
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        await maybeStartGame(room, emitToRoom);
+        if (room.gameKey !== "holdem") {
+          await maybeStartGame(room, emitToRoom);
+        }
+        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
         if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
@@ -223,7 +237,10 @@ io.on("connection", async (socketRaw) => {
         socketRoom.set(socket.id, room.roomId);
         socket.emit("evt", { type: "room:joined", room: toSummary(room), youSeatIndex: seatIndex });
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        await maybeStartGame(room, emitToRoom);
+        if (room.gameKey !== "holdem") {
+          await maybeStartGame(room, emitToRoom);
+        }
+        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
         if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
@@ -236,7 +253,10 @@ io.on("connection", async (socketRaw) => {
         socketRoom.set(socket.id, room.roomId);
         socket.emit("evt", { type: "room:joined", room: toSummary(room), youSeatIndex: seatIndex });
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        await maybeStartGame(room, emitToRoom);
+        if (room.gameKey !== "holdem") {
+          await maybeStartGame(room, emitToRoom);
+        }
+        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
         if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
@@ -258,7 +278,10 @@ io.on("connection", async (socketRaw) => {
         if (!room) throw new Error("Room not found");
         setReady(room, socket.data.userId, evt.ready);
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        await maybeStartGame(room, emitToRoom);
+        if (room.gameKey !== "holdem") {
+          await maybeStartGame(room, emitToRoom);
+        }
+        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
         if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
@@ -270,6 +293,7 @@ io.on("connection", async (socketRaw) => {
         prepareNextHand(room);
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
         await maybeStartGame(room, emitToRoom);
+        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
         if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
@@ -279,7 +303,8 @@ io.on("connection", async (socketRaw) => {
         const room = getRoomById(currentRoomId);
         if (!room) throw new Error("Room not found");
         if (room.gameKey === "blackjack") {
-          await applyBlackjackAction(room, socket.data.userId, evt.action, emitToRoom);
+          await applyBlackjackAction(room, socket.data.userId, evt.action, emitToRoom, emitToSocket);
+          emitBlackjackState(room);
         } else if (room.gameKey === "spades") {
           await applySpadesAction(room, socket.data.userId, evt.action);
           emitSpadesState(room);
@@ -317,7 +342,8 @@ setInterval(async () => {
   const { listRooms } = await import("./rooms/runtime.js");
   const all = listRooms();
   for (const r of all) {
-    await handleTimeoutTick(r, emitToRoom);
+    const advancedBlackjack = await handleTimeoutTick(r, emitToRoom, emitToSocket);
+    if (advancedBlackjack && r.gameKey === "blackjack") emitBlackjackState(r);
     const advanced = await handleSpadesBotTick(r);
     if (advanced && r.gameKey === "spades") emitSpadesState(r);
     const advancedHoldem = await handleHoldemBotTick(r);

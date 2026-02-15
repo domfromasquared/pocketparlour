@@ -7,6 +7,7 @@ export function SpadesTable() {
   const { publicState, userId, room, youSeatIndex } = useApp();
   const socket = getSocket();
   const [bid, setBid] = useState(4);
+  const prevPhaseRef = useRef<string | null>(null);
 
   const phase = publicState?.phase;
   const yourHand: string[] = publicState?.yourHand ?? [];
@@ -87,8 +88,17 @@ export function SpadesTable() {
   const [displayTrickPlays, setDisplayTrickPlays] = useState<{ playerId: string; card: string }[]>(trickPlays);
   const [displayYourTeamTricks, setDisplayYourTeamTricks] = useState(yourTeamTricksRaw);
   const [displayOpponentTricks, setDisplayOpponentTricks] = useState(opponentTeamTricksRaw);
+  const [resultToast, setResultToast] = useState<string | null>(null);
   const prevHistoryLen = useRef(trickHistory.length);
   const trickDelayTimer = useRef<number | null>(null);
+  const resultToastTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    const enteredNewBiddingRound = phase === "bidding" && prev !== "bidding" && yourHand.length >= 13;
+    if (enteredNewBiddingRound) setBid(4);
+    prevPhaseRef.current = phase ?? null;
+  }, [phase, yourHand.length]);
 
   useEffect(() => {
     const trickJustCompleted = trickHistory.length > prevHistoryLen.current && trickPlays.length === 0;
@@ -127,6 +137,7 @@ export function SpadesTable() {
   useEffect(() => {
     return () => {
       if (trickDelayTimer.current) window.clearTimeout(trickDelayTimer.current);
+      if (resultToastTimer.current) window.clearTimeout(resultToastTimer.current);
     };
   }, []);
 
@@ -139,16 +150,32 @@ export function SpadesTable() {
           : (myTeamParity === 1 ? "Your Team" : "Opponents")
       : null;
 
+  useEffect(() => {
+    if (phase !== "settled") return;
+    const team0 = publicState?.teamScores?.team0 ?? 0;
+    const team1 = publicState?.teamScores?.team1 ?? 0;
+    const text =
+      team0 === team1
+        ? "Round Tied"
+        : (myTeamParity === 0 ? team0 > team1 : team1 > team0)
+          ? "Your Team Won"
+          : "Your Team Lost";
+    setResultToast(text);
+    if (resultToastTimer.current) window.clearTimeout(resultToastTimer.current);
+    resultToastTimer.current = window.setTimeout(() => setResultToast(null), 2200);
+  }, [phase, myTeamParity, publicState?.teamScores?.team0, publicState?.teamScores?.team1]);
+
   return (
     <div className="spades-root">
       <div className="panel spades-header">
         <div className="panel-title">Spades</div>
-        <div className="panel-subtle">
-          {phase === "bidding" ? "Bidding" : phase === "playing" ? "Play" : "Ended"}
+        <div className={`panel-subtle ${isYourTurn ? "turn-pill" : ""}`}>
+          {isYourTurn ? "Your Turn" : phase === "bidding" ? "Bidding" : phase === "playing" ? "Play" : "Ended"}
         </div>
       </div>
 
       <div className="spades-content">
+        {resultToast && <div className="spades-result-toast">{resultToast}</div>}
         <div className="table-wood spades-stage-wrap">
           <div className="table-felt spades-layout">
             <div className="spades-table-center">
@@ -173,10 +200,13 @@ export function SpadesTable() {
                 const isTop = seatPosition(rel) === "top";
                 const isSide = seatPosition(rel) === "left" || seatPosition(rel) === "right";
                 const stackCount = Math.max(4, Math.min(10, sortedHand.length || 10));
+                const isTurnSeat = !!turnPlayerId && s.userId === turnPlayerId;
 
                 return (
                   <div key={s.seatIndex} className={seatClass}>
-                    <div className={`seat-badge ${isMe ? "badge-glow" : ""}`}>{s.displayName}</div>
+                    <div className={`seat-badge ${isMe ? "badge-glow" : ""} ${isTurnSeat ? "is-turn" : ""}`}>
+                      {s.displayName}
+                    </div>
                     {isMe ? (
                       <div className="spades-hand-bottom">
                         {sortedHand.slice(0, 13).map((c, i) => (

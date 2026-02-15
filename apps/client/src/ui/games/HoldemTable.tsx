@@ -39,13 +39,19 @@ export function HoldemTable() {
   const community: string[] = publicState?.community ?? [];
   const yourHand: string[] = publicState?.yourHand ?? [];
   const pot = publicState?.pot ?? 0;
+  const toAct = publicState?.toAct ?? null;
+  const betByPlayer = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of publicState?.players ?? []) map.set(p.playerId, p.bet ?? 0);
+    return map;
+  }, [publicState?.players]);
 
   const seatOrder = useMemo(() => seats, [seats]);
 
   return (
-    <div className="h-full w-full flex flex-col">
-      <div className="table-wood flex-1 min-h-0 p-2">
-        <div className="table-felt relative h-full w-full p-2">
+    <div className="he-root">
+      <div className="table-wood he-stage-wrap">
+        <div className="table-felt he-layout">
           <div className="table-center">
             <div className="panel px-3 py-2">
               <div className="panel-title text-center">Hold ’Em</div>
@@ -65,10 +71,13 @@ export function HoldemTable() {
             const seatStyle = relSeatStyle(s.seatIndex);
             const rotation = relRotation(s.seatIndex);
             const folded = publicState?.players?.find((p: any) => p.playerId === s.userId)?.folded ?? false;
+            const isTurn = !!s.userId && s.userId === toAct;
+            const seatBet = s.userId ? betByPlayer.get(s.userId) ?? 0 : 0;
 
             return (
               <div key={s.seatIndex} className={`seat ${seatClass}`} style={seatStyle}>
-                <div className={`seat-badge ${isMe ? "badge-glow" : ""}`}>{s.displayName}</div>
+                <div className={`seat-badge ${isMe ? "badge-glow" : ""} ${isTurn ? "is-turn" : ""}`}>{s.displayName}</div>
+                <div className="seat-chip-bet">Bet: {seatBet}</div>
                 <div
                   className="hand-row"
                   style={rotation ? { transform: `rotate(${rotation}deg)`, opacity: folded ? 0.4 : 1 } : { opacity: folded ? 0.4 : 1 }}

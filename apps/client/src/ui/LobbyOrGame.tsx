@@ -65,6 +65,12 @@ function Lobby() {
     (youSeatIndex != null ? room?.seats.find(s => s.seatIndex === youSeatIndex) : undefined) ??
     (userId ? room?.seats.find(s => s.userId === userId) : undefined);
   const isReady = mySeat?.ready ?? false;
+  const isHoldemLobby = room?.gameKey === "holdem";
+  const canStartHoldem =
+    !!room &&
+    isHoldemLobby &&
+    room.seats.some((s) => !!s.userId && !s.isBot) &&
+    room.seats.filter((s) => !!s.userId && !s.isBot).every((s) => s.ready);
   const seatsOrdered = useMemo(() => {
     const list = room?.seats.slice() ?? [];
     return list.sort((a, b) => {
@@ -77,7 +83,10 @@ function Lobby() {
   return (
     <div className="h-full flex flex-col">
       <div className="panel-title px-2 py-1">Seats</div>
-      <div className="lobby-seats-row px-2 pb-2">
+      <div
+        className="lobby-seats-row px-2 pb-2"
+        style={{ gridTemplateColumns: `repeat(${Math.max(1, seatsOrdered.length)}, minmax(0, 1fr))` }}
+      >
         {seatsOrdered.map((s) => (
           <div
             key={s.seatIndex}
@@ -94,15 +103,28 @@ function Lobby() {
       </div>
 
       <div className="mt-auto px-2 pb-2 flex items-center justify-between gap-2">
-        <div className="panel-subtle">Auto-start when all players are ready.</div>
-        {mySeat && !mySeat.isBot && (
-          <button
-            className={`start-btn game-ready-btn ${isReady ? "start-btn-join" : "start-btn-create"}`}
-            onClick={() => socket?.emit("evt", { type: "room:ready", ready: !isReady })}
-          >
-            {isReady ? "Unready" : "Ready"}
-          </button>
-        )}
+        <div className="panel-subtle">
+          {isHoldemLobby ? "Press Play when everyone is ready." : "Auto-start when all players are ready."}
+        </div>
+        <div className="flex items-center gap-2">
+          {mySeat && !mySeat.isBot && (
+            <button
+              className={`start-btn game-ready-btn ${isReady ? "start-btn-join" : "start-btn-create"}`}
+              onClick={() => socket?.emit("evt", { type: "room:ready", ready: !isReady })}
+            >
+              {isReady ? "Unready" : "Ready"}
+            </button>
+          )}
+          {isHoldemLobby && (
+            <button
+              className="start-btn start-btn-auto game-ready-btn"
+              onClick={() => socket?.emit("evt", { type: "room:next" })}
+              disabled={!canStartHoldem}
+            >
+              Play
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -116,6 +138,12 @@ function BottomActionBar() {
   const isHoldem = room?.gameKey === "holdem";
   const { publicState } = useApp();
   const [raiseAmt, setRaiseAmt] = React.useState(100);
+  const minRaise = publicState?.minRaise ?? 100;
+  const maxRaise = Math.max(minRaise * 10, minRaise + 1000);
+
+  React.useEffect(() => {
+    if (raiseAmt < minRaise) setRaiseAmt(minRaise);
+  }, [minRaise, raiseAmt]);
 
   return (
     <div className="action-bar">
@@ -157,18 +185,24 @@ function BottomActionBar() {
             </button>
           )}
           {publicState?.legalActions?.some((a: any) => a.type === "he:raise") && (
-            <div className="flex items-center gap-2">
+            <div className="holdem-raise-wrap">
+              <div className="holdem-raise-value">Raise {raiseAmt}</div>
               <input
-                className="input-field h-10 w-20"
-                type="number"
-                min={publicState?.minRaise ?? 100}
-                value={raiseAmt}
+                className="holdem-raise-slider"
+                type="range"
+                min={minRaise}
+                max={maxRaise}
+                step={minRaise}
+                value={Math.min(maxRaise, Math.max(minRaise, raiseAmt))}
                 onChange={(e) => setRaiseAmt(Number(e.target.value))}
               />
               <button
                 className="btn-green"
                 onClick={() =>
-                  socket?.emit("evt", { type: "game:action", action: { type: "he:raise", amount: raiseAmt } })
+                  socket?.emit("evt", {
+                    type: "game:action",
+                    action: { type: "he:raise", amount: Math.min(maxRaise, Math.max(minRaise, raiseAmt)) }
+                  })
                 }
               >
                 Raise

@@ -60,8 +60,10 @@ export function Home() {
   }, []);
 
   const join = async () => {
+    const code = roomCode.trim().toUpperCase();
+    if (code.length !== 5) return;
     await connectSocket();
-    getSocket()!.emit("evt", { type: "room:join", roomCode });
+    getSocket()!.emit("evt", { type: "room:join", roomCode: code });
   };
 
   const create = async () => {
@@ -280,7 +282,7 @@ export function Home() {
             <canvas ref={canvasRef} />
             <div className="wheel-pointer" />
           </div>
-          <div className={`panel-subtle mt-2 ${spinAvailable ? "spin-ready-badge" : ""}`}>
+          <div className={`panel-subtle spin-status ${spinAvailable ? "spin-ready-badge" : ""}`}>
             {spinAvailable ? "FREE SPIN READY!" : `Next free spin in ${remaining}`}
           </div>
           {spinError && <div className="panel-subtle mt-1">{spinError}</div>}
@@ -436,9 +438,25 @@ export function Home() {
             <input
               className="input-field uppercase w-full start-game-code-input"
               value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value.toUpperCase().slice(0, 8))}
+              onChange={(e) =>
+                setRoomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5))
+              }
               placeholder="ABCDE"
             />
+
+            {(selectedGame === "blackjack" || selectedGame === "holdem") && (
+              <>
+                <div className="start-game-subtle">Bet / Stake</div>
+                <input
+                  className="input-field w-full start-game-stake-input"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={stakeAmount}
+                  onChange={(e) => setStakeAmount(e.target.value.replace(/[^0-9]/g, "").slice(0, 9) || "0")}
+                  placeholder="0"
+                />
+              </>
+            )}
 
             <div className="start-game-actions">
               <button
@@ -465,6 +483,7 @@ export function Home() {
                   await join();
                   setShowGameModal(false);
                 }}
+                disabled={roomCode.trim().length !== 5}
               >
                 Join
               </button>

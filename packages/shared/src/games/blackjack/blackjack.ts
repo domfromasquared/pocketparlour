@@ -16,19 +16,35 @@ export type BJHand = { cards: BJCard[]; stood: boolean; busted: boolean; doubled
 export type BJState = {
   key: "blackjack";
   phase: "playerTurn" | "dealerTurn" | "settled";
-  playerId: string;
+  playerIds: string[];
+  currentPlayerIndex: number;
   dealer: BJHand;
-  player: BJHand;
+  players: Record<string, BJHand>;
   shoeSeed: number;
+  drawCount: number;
+};
+
+export type BJPublicPlayer = {
+  playerId: string;
+  cards: BJCard[];
+  total: number;
+  soft: boolean;
+  stood: boolean;
+  busted: boolean;
+  doubled: boolean;
 };
 
 export type BJPublicState = {
   phase: BJState["phase"];
+  currentTurnPlayerId: string | null;
+  yourPlayerId: string;
   dealerUpCard: BJCard | null;
+  dealerCards: BJCard[];
   dealerCardsCount: number;
-  playerCards: BJCard[];
-  playerTotal: number;
-  playerSoft: boolean;
+  players: BJPublicPlayer[];
+  yourCards: BJCard[];
+  yourTotal: number;
+  yourSoft: boolean;
 };
 
 function freshShoe(seed: number): BJCard[] {
@@ -91,82 +107,103 @@ function dealerShouldHit(cards: BJCard[]): boolean {
 export const blackjackPlugin: GamePlugin<BJState, BJAction, BJPublicState> = {
   key: "blackjack",
 
-  createInitialState: ({ rngSeed }) => {
+  createInitialState: ({ seats, rngSeed }) => {
     const shoe = freshShoe(rngSeed);
     const draw = () => shoe.pop()!;
-    const playerId = "P1"; // server maps actual userId; plugin stays generic
-    const player: BJHand = { cards: [draw(), draw()], stood: false, busted: false, doubled: false };
+    const playerIds = Array.from({ length: seats }, (_, i) => `P${i + 1}`);
+    const players: Record<string, BJHand> = {};
+    // Deal one card to each player twice (round-robin)
+    for (const pid of playerIds) {
+      players[pid] = { cards: [draw()], stood: false, busted: false, doubled: false };
+    }
+    for (const pid of playerIds) {
+      players[pid].cards.push(draw());
+    }
     const dealer: BJHand = { cards: [draw(), draw()], stood: false, busted: false, doubled: false };
     return {
       key: "blackjack",
       phase: "playerTurn",
-      playerId,
+      playerIds,
+      currentPlayerIndex: 0,
       dealer,
-      player,
+      players,
       shoeSeed: rngSeed
+      ,
+      drawCount: playerIds.length * 2 + 2
     };
   },
 
-  getCurrentTurnPlayerId: (s) => (s.phase === "playerTurn" ? s.playerId : null),
+  getCurrentTurnPlayerId: (s) => {
+    if (s.phase !== "playerTurn") return null;
+    for (let i = 0; i < s.playerIds.length; i++) {
+      const idx = (s.currentPlayerIndex + i) % s.playerIds.length;
+      const pid = s.playerIds[idx];
+      const hand = s.players[pid];
+      if (!hand.stood && !hand.busted) return pid;
+    }
+    return null;
+  },
 
   getLegalActions: (s, playerId) => {
     if (s.phase !== "playerTurn") return [];
-    if (playerId !== s.playerId) return [];
-    if (s.player.busted || s.player.stood) return [];
+    const current = blackjackPlugin.getCurrentTurnPlayerId(s);
+    if (playerId !== current) return [];
+    const hand = s.players[playerId];
+    if (!hand || hand.busted || hand.stood) return [];
     const actions: BJAction[] = [{ type: "bj:hit" }, { type: "bj:stand" }];
-    if (s.player.cards.length === 2) actions.push({ type: "bj:double" });
+    if (hand.cards.length === 2) actions.push({ type: "bj:double" });
     return actions;
   },
 
   applyAction: (s, action, ctx) => {
-    const shoe = freshShoe(s.shoeSeed); // deterministic shoe reconstruction
-    // Consume the same amount of draws as initial deal + subsequent draws already made.
-    // For v1: we replay from seed each time for determinism; store drawCount in a real impl.
-    // TODO: store and advance a persistent shoe index rather than replaying.
-    const drawFrom = (n: number) => {
-      for (let i=0;i<n;i++) shoe.pop();
-      return shoe.pop()!;
+    const shoe = freshShoe(s.shoeSeed);
+    const draw = () => {
+      for (let i = 0; i < s.drawCount; i++) shoe.pop();
+      const next = shoe.pop();
+      if (!next) throw new Error("Shoe empty");
+      s.drawCount += 1;
+      return next;
     };
 
     const events: any[] = [];
 
-    const initialConsumed = 4; // player2 + dealer2
-    let consumed = initialConsumed + (s.player.cards.length - 2) + (s.dealer.cards.length - 2);
-
-    const draw = () => {
-      const c = drawFrom(consumed);
-      consumed += 1;
-      return c;
-    };
-
     if (s.phase !== "playerTurn") return { state: s, events };
+    const playerId = blackjackPlugin.getCurrentTurnPlayerId(s);
+    if (!playerId) {
+      s.phase = "dealerTurn";
+      return { state: s, events };
+    }
+    const hand = s.players[playerId];
+    if (!hand) return { state: s, events };
 
     if (action.type === "bj:hit") {
-      s.player.cards.push(draw());
-      const { total } = handTotal(s.player.cards);
+      hand.cards.push(draw());
+      const { total } = handTotal(hand.cards);
       if (total > 21) {
-        s.player.busted = true;
-        s.phase = "dealerTurn";
+        hand.busted = true;
         events.push({ t: "player:bust" });
       }
     } else if (action.type === "bj:stand") {
-      s.player.stood = true;
-      s.phase = "dealerTurn";
+      hand.stood = true;
     } else if (action.type === "bj:double") {
       // Take exactly one card then stand. :contentReference[oaicite:4]{index=4}
-      s.player.doubled = true;
-      s.player.cards.push(draw());
-      const { total } = handTotal(s.player.cards);
-      if (total > 21) s.player.busted = true;
-      s.player.stood = true;
-      s.phase = "dealerTurn";
+      hand.doubled = true;
+      hand.cards.push(draw());
+      const { total } = handTotal(hand.cards);
+      if (total > 21) hand.busted = true;
+      hand.stood = true;
       events.push({ t: "player:double" });
     }
+
+    const nextCurrent = blackjackPlugin.getCurrentTurnPlayerId(s);
+    if (!nextCurrent) s.phase = "dealerTurn";
+    else s.currentPlayerIndex = s.playerIds.indexOf(nextCurrent);
 
     // Dealer turn if needed
     if (s.phase === "dealerTurn") {
       // Dealer checks blackjack as part of settle (simplified).
-      while (!s.player.busted && dealerShouldHit(s.dealer.cards)) {
+      const anyLivePlayer = s.playerIds.some((pid) => !s.players[pid].busted);
+      while (anyLivePlayer && dealerShouldHit(s.dealer.cards)) {
         s.dealer.cards.push(draw());
       }
       const dTotal = handTotal(s.dealer.cards).total;
@@ -179,38 +216,63 @@ export const blackjackPlugin: GamePlugin<BJState, BJAction, BJPublicState> = {
     return { state: s, events };
   },
 
-  getPublicState: (s) => {
-    const { total, soft } = handTotal(s.player.cards);
+  getPublicState: (s, forPlayerId) => {
+    const currentTurnPlayerId = blackjackPlugin.getCurrentTurnPlayerId(s);
+    const yourHand = s.players[forPlayerId] ?? { cards: [], stood: false, busted: false, doubled: false };
+    const your = handTotal(yourHand.cards);
+    const players: BJPublicPlayer[] = s.playerIds.map((pid) => {
+      const hand = s.players[pid];
+      const { total, soft } = handTotal(hand.cards);
+      return {
+        playerId: pid,
+        cards: hand.cards,
+        total,
+        soft,
+        stood: hand.stood,
+        busted: hand.busted,
+        doubled: hand.doubled
+      };
+    });
     return {
       phase: s.phase,
+      currentTurnPlayerId,
+      yourPlayerId: forPlayerId,
       dealerUpCard: s.dealer.cards[0] ?? null,
+      dealerCards: s.phase === "playerTurn" ? [s.dealer.cards[0]].filter(Boolean) as BJCard[] : s.dealer.cards,
       dealerCardsCount: s.phase === "playerTurn" ? 1 : s.dealer.cards.length,
-      playerCards: s.player.cards,
-      playerTotal: total,
-      playerSoft: soft
+      players,
+      yourCards: yourHand.cards,
+      yourTotal: your.total,
+      yourSoft: your.soft
     };
   },
 
   isGameOver: (s) => s.phase === "settled",
 
   getWinners: (s) => {
-    const pBJ = isBlackjack(s.player.cards);
     const dBJ = isBlackjack(s.dealer.cards);
-    const pTotal = handTotal(s.player.cards).total;
     const dTotal = handTotal(s.dealer.cards).total;
-
-    let outcome: "win" | "lose" | "push" = "push";
-    if (pBJ && !dBJ) outcome = "win";
-    else if (!pBJ && dBJ) outcome = "lose";
-    else if (s.player.busted) outcome = "lose";
-    else if (s.dealer.busted) outcome = "win";
-    else if (pTotal > dTotal) outcome = "win";
-    else if (pTotal < dTotal) outcome = "lose";
-    else outcome = "push";
+    const outcomeByPlayer: Record<string, "win" | "lose" | "push"> = {};
+    const winners: string[] = [];
+    for (const pid of s.playerIds) {
+      const hand = s.players[pid];
+      const pBJ = isBlackjack(hand.cards);
+      const pTotal = handTotal(hand.cards).total;
+      let outcome: "win" | "lose" | "push" = "push";
+      if (pBJ && !dBJ) outcome = "win";
+      else if (!pBJ && dBJ) outcome = "lose";
+      else if (hand.busted) outcome = "lose";
+      else if (s.dealer.busted) outcome = "win";
+      else if (pTotal > dTotal) outcome = "win";
+      else if (pTotal < dTotal) outcome = "lose";
+      else outcome = "push";
+      outcomeByPlayer[pid] = outcome;
+      if (outcome === "win") winners.push(pid);
+    }
 
     return {
-      winners: outcome === "win" ? [s.playerId] : [],
-      outcomeByPlayer: { [s.playerId]: outcome }
+      winners,
+      outcomeByPlayer
     };
   },
 

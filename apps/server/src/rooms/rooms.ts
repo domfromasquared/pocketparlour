@@ -3,7 +3,7 @@ import crypto from "crypto";
 import type { GameKey, RoomSummary, Seat, ServerToClientEvent, SpadesPublicState, SpadesState, HEPublicState, HEState } from "@versus/shared";
 import { blackjackPlugin, spadesPlugin, holdemPlugin } from "@versus/shared";
 import { mulberry32 } from "@versus/shared";
-import { ensureWalletRow, getBalance, lockStake, refundStake, settleMatchWinnerTakeAll, settleMatchSplitPot } from "../economy/economy.js";
+import { ensureWalletRow, getBalance, lockStake, refundStake, settleMatchSplitPot } from "../economy/economy.js";
 import { pool } from "../db.js";
 import type { Room, SocketWithUser } from "./roomTypes.js";
 import { _bindRoomStores } from "./runtime.js";
@@ -24,7 +24,7 @@ function genRoomId(): string {
 }
 
 function getSeatsCount(gameKey: GameKey): number {
-  if (gameKey === "blackjack") return 1;
+  if (gameKey === "blackjack") return 5;
   if (gameKey === "spades") return 4;
   if (gameKey === "holdem") return 6;
   return 2;
@@ -55,12 +55,29 @@ export function toSummary(r: Room): RoomSummary {
 }
 
 export function findBestRoom(gameKey: GameKey, stakeAmount: bigint): Room | null {
+  // Prefer existing active matches first so auto-join spectates/queues into live play.
+  for (const r of rooms.values()) {
+    if (r.gameKey !== gameKey) continue;
+    if (r.stakeAmount !== stakeAmount) continue;
+    if (r.status !== "active") continue;
+    return r;
+  }
+
+  // Otherwise join a lobby room with open seats.
   for (const r of rooms.values()) {
     if (r.gameKey !== gameKey) continue;
     if (r.status !== "lobby") continue;
     if (r.stakeAmount !== stakeAmount) continue;
     const hasEmpty = r.seats.some(s => !s.userId);
     if (hasEmpty) return r;
+  }
+
+  // Finally, if no empty lobby seat exists, still return a lobby room so queueing can happen.
+  for (const r of rooms.values()) {
+    if (r.gameKey !== gameKey) continue;
+    if (r.status !== "lobby") continue;
+    if (r.stakeAmount !== stakeAmount) continue;
+    return r;
   }
   return null;
 }
@@ -133,7 +150,7 @@ export function joinRoom(room: Room, sock: SocketWithUser): { seatIndex: number 
   empty.userId = sock.data.userId;
   empty.displayName = sock.data.displayName;
   empty.isBot = false;
-  empty.ready = room.gameKey === "holdem" ? true : room.conns.get(sock.data.userId)?.ready ?? false;
+  empty.ready = room.conns.get(sock.data.userId)?.ready ?? false;
   return { seatIndex: empty.seatIndex };
 }
 
@@ -180,7 +197,7 @@ export function prepareNextHand(room: Room) {
     room.bjState = undefined;
     room.turnDeadline = undefined;
     room.rngSeed = Math.floor(Math.random() * 1_000_000_000);
-    applyBlackjackQueue(room);
+    seatQueuedPlayers(room);
     for (const seat of room.seats) {
       if (seat.userId && !seat.isBot) seat.ready = true;
     }
@@ -198,36 +215,6 @@ export function prepareNextHand(room: Room) {
       if (seat.userId && !seat.isBot) seat.ready = true;
     }
   }
-}
-
-function applyBlackjackQueue(room: Room) {
-  if (room.gameKey !== "blackjack") return;
-  const queue = room.waitingQueue ?? [];
-  if (queue.length === 0) return;
-  const seat = room.seats[0];
-  if (!seat) return;
-
-  const currentUserId = seat.userId;
-  const currentDisplayName = seat.displayName;
-  const next = queue.shift();
-  if (!next) return;
-
-  seat.userId = next.userId;
-  seat.displayName = next.displayName;
-  seat.isBot = false;
-  seat.botDifficulty = undefined;
-  seat.ready = true;
-
-  if (
-    currentUserId &&
-    !currentUserId.startsWith("bot:") &&
-    currentUserId !== next.userId &&
-    !queue.some(q => q.userId === currentUserId)
-  ) {
-    queue.push({ userId: currentUserId, displayName: currentDisplayName });
-  }
-
-  room.waitingQueue = queue;
 }
 
 function fillBots(room: Room) {
@@ -275,8 +262,11 @@ export async function maybeStartGame(room: Room, ioEmitRoom: (roomId: string, ev
   if (!allHumansReady(room)) return;
 
   const seatedUsers = room.seats.filter(s => !!s.userId).map(s => s.userId!) as string[];
-  if (room.gameKey === "blackjack" && seatedUsers.length === 1) {
-    const userId = seatedUsers[0];
+  if (room.gameKey === "blackjack") {
+    fillBots(room);
+    const playerIds = room.seats.filter(s => !!s.userId).map(s => s.userId!) as string[];
+    const humanIds = room.seats.filter(s => !s.isBot && !!s.userId).map(s => s.userId!) as string[];
+    if (playerIds.length === 0) return;
     const matchId = crypto.randomUUID();
     room.matchId = matchId;
 
@@ -285,29 +275,43 @@ export async function maybeStartGame(room: Room, ioEmitRoom: (roomId: string, ev
       `insert into matches (match_id, room_id, game_key, stake_amount, status) values ($1,$2,$3,$4,'active')`,
       [matchId, room.roomId, room.gameKey, room.stakeAmount.toString()]
     );
-    await pool.query(
-      `insert into match_players (match_id, user_id, is_bot, seat_index) values ($1,$2,false,0)`,
-      [matchId, userId]
-    );
+    for (const seat of room.seats) {
+      if (!seat.userId) continue;
+      await pool.query(
+        `insert into match_players (match_id, user_id, is_bot, seat_index) values ($1,$2,$3,$4)`,
+        [matchId, seat.isBot ? null : seat.userId, seat.isBot, seat.seatIndex]
+      );
+    }
 
     // Lock stake atomically (idempotent)
     await lockStake({
       matchId,
       gameKey: room.gameKey,
       stakeAmount: room.stakeAmount,
-      userIds: [userId],
+      userIds: humanIds,
       roomId: room.roomId
     });
 
     // Start game
     room.status = "active";
-    const state = blackjackPlugin.createInitialState({ seats: 1, stakeAmount: room.stakeAmount, rngSeed: room.rngSeed });
-    // Map plugin playerId "P1" -> actual user; store separately in room (v1: single seat)
-    room.bjState = { ...state, playerId: userId };
+    const base = blackjackPlugin.createInitialState({ seats: playerIds.length, stakeAmount: room.stakeAmount, rngSeed: room.rngSeed });
+    const remap: Record<string, string> = {};
+    base.playerIds.forEach((pid, i) => (remap[pid] = playerIds[i]));
+    const mappedPlayers: typeof base.players = {};
+    for (const [pid, hand] of Object.entries(base.players)) {
+      mappedPlayers[remap[pid]] = hand;
+    }
+    room.bjState = {
+      ...base,
+      playerIds,
+      players: mappedPlayers,
+      currentPlayerIndex: 0
+    };
+    const current = blackjackPlugin.getCurrentTurnPlayerId(room.bjState);
+    if (current) room.bjState.currentPlayerIndex = room.bjState.playerIds.indexOf(current);
     room.turnDeadline = Date.now() + room.turnMs;
 
     ioEmitRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-    ioEmitRoom(room.roomId, { type: "game:state", publicState: blackjackPlugin.getPublicState(room.bjState, userId) });
   }
 
   if (room.gameKey === "spades") {
@@ -409,7 +413,7 @@ export async function maybeStartGame(room: Room, ioEmitRoom: (roomId: string, ev
 }
 
 export function seatQueuedPlayers(room: Room) {
-  if (room.gameKey !== "holdem" && room.gameKey !== "spades") return;
+  if (room.gameKey !== "holdem" && room.gameKey !== "spades" && room.gameKey !== "blackjack") return;
   // Clear bots so humans can take seats next hand
   for (const seat of room.seats) {
     if (seat.isBot) {
@@ -434,30 +438,42 @@ export function seatQueuedPlayers(room: Room) {
   room.waitingQueue = queue;
 }
 
-export async function handleTimeoutTick(room: Room, ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void) {
-  if (room.status !== "active" || room.gameKey !== "blackjack" || !room.bjState) return;
+export async function handleTimeoutTick(
+  room: Room,
+  ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void,
+  ioEmitSocket: (socketId: string, evt: ServerToClientEvent) => void
+): Promise<boolean> {
+  if (room.status !== "active" || room.gameKey !== "blackjack" || !room.bjState) return false;
   const now = Date.now();
-  if (!room.turnDeadline || now < room.turnDeadline) return;
+  if (!room.turnDeadline || now < room.turnDeadline) return false;
 
-  const userId = room.bjState.playerId;
-  // Auto-move policy: if total < 17 => hit else stand
+  const userId = blackjackPlugin.getCurrentTurnPlayerId(room.bjState);
+  if (!userId) return false;
   const pub = blackjackPlugin.getPublicState(room.bjState, userId);
-  const action = pub.playerTotal < 17 ? ({ type: "bj:hit" } as const) : ({ type: "bj:stand" } as const);
+  // Auto-move policy: if total < 17 => hit else stand
+  const total = pub.players.find((p) => p.playerId === userId)?.total ?? 0;
+  const action = total < 17 ? ({ type: "bj:hit" } as const) : ({ type: "bj:stand" } as const);
 
   const { state } = blackjackPlugin.applyAction(room.bjState, action, { now, rngSeed: room.rngSeed, turnMs: room.turnMs });
   room.bjState = state;
   room.turnDeadline = Date.now() + room.turnMs;
 
-  ioEmitRoom(room.roomId, { type: "game:state", publicState: blackjackPlugin.getPublicState(room.bjState, userId) });
-
   if (blackjackPlugin.isGameOver(room.bjState)) {
-    await endGame(room, ioEmitRoom);
+    await endGame(room, ioEmitRoom, ioEmitSocket);
   }
+  return true;
 }
 
-export async function applyBlackjackAction(room: Room, userId: string, action: any, ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void) {
+export async function applyBlackjackAction(
+  room: Room,
+  userId: string,
+  action: any,
+  ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void,
+  ioEmitSocket: (socketId: string, evt: ServerToClientEvent) => void
+) {
   if (room.status !== "active" || room.gameKey !== "blackjack" || !room.bjState) throw new Error("Not in game");
-  if (room.bjState.playerId !== userId) throw new Error("Not your seat");
+  const current = blackjackPlugin.getCurrentTurnPlayerId(room.bjState);
+  if (current !== userId) throw new Error("Not your seat");
 
   const legal = blackjackPlugin.getLegalActions(room.bjState, userId);
   if (!legal.some(a => a.type === action?.type)) throw new Error("Illegal action");
@@ -477,10 +493,8 @@ export async function applyBlackjackAction(room: Room, userId: string, action: a
     );
   }
 
-  ioEmitRoom(room.roomId, { type: "game:state", publicState: blackjackPlugin.getPublicState(room.bjState, userId) });
-
   if (blackjackPlugin.isGameOver(room.bjState)) {
-    await endGame(room, ioEmitRoom);
+    await endGame(room, ioEmitRoom, ioEmitSocket);
   }
 }
 
@@ -553,38 +567,59 @@ export async function handleHoldemBotTick(room: Room): Promise<boolean> {
   return true;
 }
 
-async function endGame(room: Room, ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void) {
+async function endGame(
+  room: Room,
+  ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void,
+  ioEmitSocket: (socketId: string, evt: ServerToClientEvent) => void
+) {
   if (!room.matchId || !room.bjState) return;
-  const userId = room.bjState.playerId;
-
   const winners = blackjackPlugin.getWinners(room.bjState);
-  const outcome = winners.outcomeByPlayer[userId];
+  const humanIds = room.seats.filter((s) => !s.isBot && !!s.userId).map((s) => s.userId!) as string[];
+  const winIds = humanIds.filter((uid) => winners.outcomeByPlayer[uid] === "win");
+  const pushIds = humanIds.filter((uid) => winners.outcomeByPlayer[uid] === "push");
 
-  // Settle
-  await settleMatchWinnerTakeAll({
-    matchId: room.matchId,
-    gameKey: room.gameKey,
-    stakeAmount: room.stakeAmount,
-    userIds: [userId],
-    winnerUserId: outcome === "win" ? userId : null,
-    outcomeByUser: { [userId]: outcome },
-    roomId: room.roomId
-  });
-
-  const newBal = await getBalance(userId);
-
-  // Compute delta for end modal
-  let delta = 0n;
   if (room.stakeAmount > 0n) {
-    if (outcome === "win") delta = room.stakeAmount; // net +stake vs house
-    else if (outcome === "lose") delta = -room.stakeAmount;
-    else delta = 0n;
+    if (winIds.length > 0) {
+      await settleMatchSplitPot({
+        matchId: room.matchId,
+        gameKey: room.gameKey,
+        stakeAmount: room.stakeAmount * 2n,
+        userIds: winIds,
+        winnerUserIds: winIds,
+        roomId: room.roomId
+      });
+    }
+    if (pushIds.length > 0) {
+      await refundStake({
+        matchId: room.matchId,
+        gameKey: room.gameKey,
+        stakeAmount: room.stakeAmount,
+        userIds: pushIds,
+        roomId: room.roomId
+      });
+    }
   }
 
-  ioEmitRoom(room.roomId, {
-    type: "game:ended",
-    result: { delta: delta.toString(), newBalance: newBal.toString(), outcome }
-  });
+  for (const uid of humanIds) {
+    const outcome = winners.outcomeByPlayer[uid] ?? "lose";
+    let delta = 0n;
+    if (room.stakeAmount > 0n) {
+      if (outcome === "win") delta = room.stakeAmount;
+      else if (outcome === "lose") delta = -room.stakeAmount;
+    }
+    const newBal = await getBalance(uid);
+    const conn = room.conns.get(uid);
+    if (conn) {
+      ioEmitSocket(conn.socketId, {
+        type: "game:ended",
+        result: { delta: delta.toString(), newBalance: newBal.toString(), outcome }
+      });
+    }
+  }
+  await pool.query(
+    `update matches set status='finished', winner_user_id=$1, finished_at=now() where match_id=$2`,
+    [winIds[0] ?? null, room.matchId]
+  );
 
   room.status = "ended";
   ioEmitRoom(room.roomId, { type: "room:update", room: toSummary(room) });

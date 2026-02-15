@@ -1,6 +1,6 @@
 // apps/client/src/ui/App.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { connectSocket, resetSocket } from "../lib/socket";
+import { connectSocket, getSocket, resetSocket } from "../lib/socket";
 import { useApp } from "../state/store";
 import { Home } from "./Home";
 import { LobbyOrGame } from "./LobbyOrGame";
@@ -86,7 +86,18 @@ function TopHud() {
   const { balance, room, displayName, setDisplayName, authed, userEmail, userId } = useApp();
   const roomCode = room?.roomCode ?? "—";
   const [open, setOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
   const initials = (displayName || "P").trim().slice(0, 2).toUpperCase();
+
+  const joinAnyRoomByCode = async () => {
+    const code = joinCode.trim().toUpperCase();
+    if (code.length !== 5) return;
+    await connectSocket();
+    getSocket()?.emit("evt", { type: "room:join", roomCode: code });
+    setJoinCode(code);
+    setOpen(false);
+  };
+
   return (
     <div>
       <div className="hud-bar">
@@ -129,8 +140,26 @@ function TopHud() {
                   <div className="profile-stat-value">{(userId ?? "—").slice(0, 8)}</div>
                 </div>
                 <div className="profile-stat">
-                  <div className="profile-stat-label">Room</div>
-                  <div className="profile-stat-value">{roomCode}</div>
+                  <div className="profile-stat-label">Join A Room</div>
+                  <div className="settings-room-join">
+                    <input
+                      className="input-field settings-room-code-input"
+                      value={joinCode}
+                      onChange={(e) =>
+                        setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5))
+                      }
+                      placeholder="ABCDE"
+                      maxLength={5}
+                      aria-label="Join room code"
+                    />
+                    <button
+                      className="settings-room-join-btn"
+                      onClick={joinAnyRoomByCode}
+                      disabled={joinCode.trim().length !== 5}
+                    >
+                      Join
+                    </button>
+                  </div>
                 </div>
                 <div className="profile-stat">
                   <div className="profile-stat-label">Status</div>
