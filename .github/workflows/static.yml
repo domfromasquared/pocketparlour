@@ -37,6 +37,11 @@ jobs:
         run: pnpm install
 
       - name: Build client
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_SERVER_URL_PROD: ${{ secrets.VITE_SERVER_URL_PROD }}
+          VITE_AUTH_REDIRECT_URL_PROD: ${{ secrets.VITE_AUTH_REDIRECT_URL_PROD }}
         run: pnpm -C apps/client build
 
       - name: Upload artifact
