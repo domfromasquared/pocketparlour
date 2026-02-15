@@ -182,7 +182,12 @@ io.on("connection", async (socketRaw) => {
   socket.emit("evt", { type: "auth:ok", user: { userId: socket.data.userId, displayName: socket.data.displayName } });
 
   // Always push wallet balance on connect
-  await emitWallet(socket);
+  try {
+    await emitWallet(socket);
+  } catch (err) {
+    app.log.error({ err, userId: socket.data.userId }, "emitWallet failed on connect");
+    socket.emit("evt", { type: "error", message: "Wallet temporarily unavailable" });
+  }
 
   socket.on("evt", async (msg: unknown) => {
     // Basic per-socket rate limit
