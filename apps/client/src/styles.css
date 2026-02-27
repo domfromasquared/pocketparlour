@@ -132,6 +132,28 @@ body {
   overflow: hidden;
 }
 
+.fit-safe-container {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.fit-safe-row {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.fit-safe-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 0;
+}
+
 .panel-title {
   font-family: "Baloo 2", "Rubik", sans-serif;
   font-weight: 800;
@@ -959,67 +981,64 @@ body {
 }
 
 /* Blackjack layout (visual arrangement mirrors spades table proportions) */
-.bj-root {
+ .bj-root {
   height: 100%;
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-2);
 }
 
-.bj-header {
+ .bj-header {
   padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.bj-content {
+ .bj-content {
   min-height: 0;
 }
 
-.bj-stage-wrap {
+ .bj-stage-wrap {
   min-height: clamp(320px, 62dvh, 760px);
   height: 100%;
 }
 
-.bj-layout {
+ .bj-layout {
   --bj-card-w: clamp(36px, 8.7vw, 57px);
   --bj-card-h: calc(var(--bj-card-w) * 1.418);
   --bj-overlap: clamp(20px, 4.5vw, 32px);
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
   width: 100%;
   height: 100%;
+  padding: var(--space-3);
 }
 
-.bj-layout .card {
+ .bj-layout .card {
   width: var(--bj-card-w);
   height: var(--bj-card-h);
   border-radius: 9px;
 }
 
-.bj-dealer-seat {
-  position: absolute;
-  top: var(--space-2);
-  left: 50%;
-  transform: translateX(-50%);
+ .bj-layout-row {
   display: flex;
-  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
   align-items: center;
-  gap: 6px;
-  z-index: 3;
+  gap: var(--space-2);
 }
 
+.bj-dealer-seat,
 .bj-player-seat {
-  position: absolute;
-  bottom: var(--space-2);
-  left: 50%;
-  transform: translateX(-50%);
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  z-index: 3;
 }
 
 .bj-hand-bottom {
@@ -1052,21 +1071,12 @@ body {
   box-shadow: 0 0 0 3px rgba(255, 222, 107, 0.9), 0 9px 21px rgba(0, 0, 0, 0.45);
 }
 
-.bj-side-col {
-  position: absolute;
-  top: 22%;
+.bj-side-column {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  z-index: 3;
-}
-
-.bj-side-left {
-  left: var(--space-2);
-}
-
-.bj-side-right {
-  right: var(--space-2);
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
 }
 
 .bj-opp-seat {

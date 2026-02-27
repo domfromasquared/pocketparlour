@@ -128,6 +128,11 @@ export function SpadesTable() {
     }
 
     if (!trickDelayTimer.current) {
+      const alreadyAtDefaultState =
+        displayTrickPlays.length === 0 &&
+        displayYourTeamTricks === yourTeamTricksRaw &&
+        displayOpponentTricks === opponentTeamTricksRaw;
+      if (alreadyAtDefaultState) return;
       setDisplayTrickPlays([]);
       setDisplayYourTeamTricks(yourTeamTricksRaw);
       setDisplayOpponentTricks(opponentTeamTricksRaw);
