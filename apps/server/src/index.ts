@@ -14,6 +14,7 @@ import {
   buildHoldemPublicState,
   createRoom,
   emitWallet,
+  endHoldemGame,
   findBestRoom,
   getRoomByCode,
   joinRoom,
@@ -324,9 +325,10 @@ io.on("connection", async (socketRaw) => {
         } else if (room.gameKey === "holdem") {
           await applyHoldemAction(room, socket.data.userId, evt.action);
           emitHoldemState(room);
-          if (room.heState && holdemPlugin.isGameOver(room.heState) && room.status === "active") {
-            await emitHoldemResults(room);
-          }
+          
+          if (r.heState && holdemPlugin.isGameOver(r.heState) && r.status === "active") {
+          await endHoldemGame(r, emitToRoom, emitToSocket);
+        }
         } else {
           throw new Error("Game not implemented");
         }
@@ -363,8 +365,8 @@ setInterval(async () => {
     if (advancedHoldem && r.gameKey === "holdem") {
       emitHoldemState(r);
       if (r.heState && holdemPlugin.isGameOver(r.heState) && r.status === "active") {
-        await emitHoldemResults(r);
-      }
+  await endHoldemGame(r, emitToRoom, emitToSocket);
+}
     }
   }
 }, 500);

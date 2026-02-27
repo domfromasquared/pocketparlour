@@ -40,6 +40,88 @@ function makeSeats(gameKey: GameKey): Seat[] {
   }));
 }
 
+export async function endHoldemGame(
+  room: Room,
+  ioEmitRoom: (roomId: string, evt: ServerToClientEvent) => void,
+  ioEmitSocket: (socketId: string, evt: ServerToClientEvent) => void
+) {
+  if (!room.matchId || !room.heState) return;
+
+  const winners = holdemPlugin.getWinners(room.heState);
+
+  const humanIds = room.seats.filter(s => s.userId && !s.isBot).map(s => s.userId!) as string[];
+  const humanWinnerIds = winners.winners.filter(pid => humanIds.includes(pid));
+
+  // Economy: only humans have wallets.
+  if (room.stakeAmount > 0n && humanIds.length > 0) {
+    if (humanWinnerIds.length === 0) {
+      // bot(s) won or no human winner: refund humans
+      await refundStake({
+        matchId: room.matchId,
+        gameKey: room.gameKey,
+        stakeAmount: room.stakeAmount,
+        userIds: humanIds,
+        roomId: room.roomId
+      });
+    } else {
+      // split pot among winning humans
+      await settleMatchSplitPot({
+        matchId: room.matchId,
+        gameKey: room.gameKey,
+        stakeAmount: room.stakeAmount,
+        userIds: humanIds,
+        winnerUserIds: humanWinnerIds,
+        roomId: room.roomId
+      });
+    }
+  }
+
+  // Emit per-human result with deterministic delta:
+  // - if refunded: 0
+  // - if loser: -stake
+  // - if winner: (share - stake) where share is pot/humanWinnerCount with remainder distribution
+  const pot = room.stakeAmount * BigInt(humanIds.length);
+  const wCount = BigInt(Math.max(1, humanWinnerIds.length));
+  const baseShare = humanWinnerIds.length > 0 ? pot / wCount : 0n;
+  let remainder = humanWinnerIds.length > 0 ? pot % wCount : 0n;
+
+  for (const uid of humanIds) {
+    let delta = 0n;
+    const outcome = winners.outcomeByPlayer[uid] ?? "lose";
+
+    if (room.stakeAmount > 0n) {
+      if (humanWinnerIds.length === 0) {
+        delta = 0n; // refund case
+      } else if (humanWinnerIds.includes(uid)) {
+        let share = baseShare;
+        if (remainder > 0n) {
+          share += 1n;
+          remainder -= 1n;
+        }
+        delta = share - room.stakeAmount;
+      } else {
+        delta = -room.stakeAmount;
+      }
+    }
+
+    const newBal = await getBalance(uid);
+    const conn = room.conns.get(uid);
+    if (conn) {
+      ioEmitSocket(conn.socketId, {
+        type: "game:ended",
+        result: { delta: delta.toString(), newBalance: newBal.toString(), outcome }
+      });
+    }
+  }
+
+  await pool.query(
+    `update matches set status='finished', winner_user_id=$1, finished_at=now() where match_id=$2`,
+    [humanWinnerIds[0] ?? null, room.matchId]
+  );
+
+  room.status = "ended";
+  ioEmitRoom(room.roomId, { type: "room:update", room: toSummary(room) });
+}
 export function toSummary(r: Room): RoomSummary {
   return {
     roomId: r.roomId,
@@ -261,7 +343,29 @@ export async function maybeStartGame(room: Room, ioEmitRoom: (roomId: string, ev
   if (room.status !== "lobby") return;
   if (!allHumansReady(room)) return;
 
-  const seatedUsers = room.seats.filter(s => !!s.userId).map(s => s.userId!) as string[];
+  // apps/server/src/rooms/rooms.ts (inside maybeStartGame hold'em branch)
+
+const humanIds = room.seats.filter(s => s.userId && !s.isBot).map(s => s.userId!) as string[];
+
+for (const seat of room.seats) {
+  if (!seat.userId) continue;
+  await pool.query(
+    `insert into match_players (match_id, user_id, is_bot, seat_index)
+     values ($1,$2,$3,$4)`,
+    [matchId, seat.isBot ? null : seat.userId, seat.isBot, seat.seatIndex]
+  );
+}
+
+// Lock stake atomically (idempotent) — humans only
+await lockStake({
+  matchId,
+  gameKey: room.gameKey,
+  stakeAmount: room.stakeAmount,
+  userIds: humanIds,
+  roomId: room.roomId
+});
+
+const seatedUsers = room.seats.filter(s => !!s.userId).map(s => s.userId!) as string[];
   if (room.gameKey === "blackjack") {
     fillBots(room);
     const playerIds = room.seats.filter(s => !!s.userId).map(s => s.userId!) as string[];
