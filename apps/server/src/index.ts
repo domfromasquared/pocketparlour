@@ -10,8 +10,10 @@ import {
   applyBlackjackAction,
   applyHoldemAction,
   applySpadesAction,
+  applyGenericAction,
   buildSpadesPublicState,
   buildHoldemPublicState,
+  getGenericPublicState,
   createRoom,
   emitWallet,
   endHoldemGame,
@@ -22,7 +24,7 @@ import {
   maybeStartGame,
   handleSpadesBotTick,
   handleHoldemBotTick,
-  seatQueuedPlayers,
+  handleGenericBotTick,
   setReady,
   toSummary,
   handleTimeoutTick
@@ -31,7 +33,6 @@ import { getRoomById, internalCleanupLeave } from "./rooms/runtime.js";
 import type { SocketWithUser } from "./rooms/roomTypes.js";
 import { grantReward } from "./economy/economy.js";
 import { pool } from "./db.js";
-import { getBalance } from "./economy/economy.js";
 
 const app = Fastify({ logger: true });
 const allowedOrigins = env.PUBLIC_ORIGIN.split(",")
@@ -92,7 +93,6 @@ app.post("/daily-spin", async (req, reply) => {
   const verified = await verifySupabaseJwt(token);
   if (!verified) return reply.status(401).send({ error: "Unauthorized" });
 
-  // serialize per user to avoid double spins
   await pool.query("select pg_advisory_xact_lock(hashtext($1))", [verified.userId]);
   const lastSpinAt = await getLastSpinAt(verified.userId);
   const msLeft = msUntilNextSpin(lastSpinAt);
@@ -102,19 +102,16 @@ app.post("/daily-spin", async (req, reply) => {
   }
 
   const now = new Date();
-const day = spinDayUTC(now);
-
-// deterministic per-user-per-day idempotency
-const idempotencyKey = `daily_spin:${verified.userId}:${day}`;
-
-const prize = DAILY_SPIN_PRIZES[Math.floor(Math.random() * DAILY_SPIN_PRIZES.length)];
-const newBalance = await grantReward({
-  userId: verified.userId,
-  amount: BigInt(prize),
-  gameKey: "blackjack",
-  idempotencyKey,
-  metadata: { source: "daily_spin", prize, spin_day: day }
-});
+  const day = spinDayUTC(now);
+  const idempotencyKey = `daily_spin:${verified.userId}:${day}`;
+  const prize = DAILY_SPIN_PRIZES[Math.floor(Math.random() * DAILY_SPIN_PRIZES.length)];
+  const newBalance = await grantReward({
+    userId: verified.userId,
+    amount: BigInt(prize),
+    gameKey: "blackjack",
+    idempotencyKey,
+    metadata: { source: "daily_spin", prize, spin_day: day }
+  });
 
   return {
     prize,
@@ -130,15 +127,12 @@ const io = new Server(httpServer, {
   transports: ["websocket"]
 });
 
-// Socket auth middleware: client passes { auth: { accessToken, displayName } }
 io.use(async (socket, next) => {
   const accessToken = (socket.handshake.auth?.accessToken ?? "") as string;
   const displayName = (socket.handshake.auth?.displayName ?? "Guest") as string;
-
   if (!accessToken) return next(new Error("Missing access token"));
   const verified = await verifySupabaseJwt(accessToken);
   if (!verified) return next(new Error("Invalid session"));
-
   (socket as SocketWithUser).data = { userId: verified.userId, displayName };
   next();
 });
@@ -178,35 +172,35 @@ function emitHoldemState(room: any) {
   }
 }
 
-async function emitHoldemResults(room: any) {
-  if (!room.heState) return;
-  const winners = holdemPlugin.getWinners(room.heState);
+function emitGenericState(room: any) {
   for (const conn of room.conns.values()) {
-    const sock = io.sockets.sockets.get(conn.socketId);
-    if (!sock) continue;
-    const outcome = winners.outcomeByPlayer[conn.userId] ?? "lose";
-    const bal = await getBalance(conn.userId);
-    sock.emit("evt", {
-      type: "game:ended",
-      result: { delta: "0", newBalance: bal.toString(), outcome }
-    });
+    const pub = getGenericPublicState(room, conn.userId);
+    if (!pub) continue;
+    io.to(conn.socketId).emit("evt", { type: "game:state", publicState: pub });
   }
-  room.status = "lobby";
-  room.heState = undefined;
-  room.matchId = null;
-  room.turnDeadline = undefined;
-  seatQueuedPlayers(room);
-  emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
 }
 
-const socketRoom = new Map<string, string>(); // socket.id -> roomId
+const GENERIC_GAMES = new Set(["liars_dice", "dominoes", "checkers", "chess", "solitaire", "scrabble"]);
+
+function isGeneric(gameKey: string): boolean {
+  return GENERIC_GAMES.has(gameKey);
+}
+
+async function dispatchRoomStart(room: any) {
+  await maybeStartGame(room, emitToRoom);
+  if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
+  if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
+  if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
+  if (isGeneric(room.gameKey) && room.status === "active") emitGenericState(room);
+}
+
+const socketRoom = new Map<string, string>();
 
 io.on("connection", async (socketRaw) => {
   const socket = socketRaw as SocketWithUser;
 
   socket.emit("evt", { type: "auth:ok", user: { userId: socket.data.userId, displayName: socket.data.displayName } });
 
-  // Always push wallet balance on connect
   try {
     await emitWallet(socket);
   } catch (err) {
@@ -215,8 +209,6 @@ io.on("connection", async (socketRaw) => {
   }
 
   socket.on("evt", async (msg: unknown) => {
-    // Basic per-socket rate limit
-    // NOTE: Fastify rate-limit doesn't cover WS; this is a simple guard.
     const parsed = ClientToServerEventSchema.safeParse(msg);
     if (!parsed.success) {
       socket.emit("evt", { type: "error", message: "Bad payload" });
@@ -235,11 +227,7 @@ io.on("connection", async (socketRaw) => {
         socketRoom.set(socket.id, room.roomId);
         socket.emit("evt", { type: "room:joined", room: toSummary(room), youSeatIndex: seatIndex });
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        if (room.gameKey !== "holdem") {
-          await maybeStartGame(room, emitToRoom);
-        }
-        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
-        if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
+        if (room.gameKey !== "holdem") await dispatchRoomStart(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
 
@@ -251,11 +239,7 @@ io.on("connection", async (socketRaw) => {
         socketRoom.set(socket.id, room.roomId);
         socket.emit("evt", { type: "room:joined", room: toSummary(room), youSeatIndex: seatIndex });
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        if (room.gameKey !== "holdem") {
-          await maybeStartGame(room, emitToRoom);
-        }
-        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
-        if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
+        if (room.gameKey !== "holdem") await dispatchRoomStart(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
 
@@ -267,20 +251,14 @@ io.on("connection", async (socketRaw) => {
         socketRoom.set(socket.id, room.roomId);
         socket.emit("evt", { type: "room:joined", room: toSummary(room), youSeatIndex: seatIndex });
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        if (room.gameKey !== "holdem") {
-          await maybeStartGame(room, emitToRoom);
-        }
-        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
-        if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
+        if (room.gameKey !== "holdem") await dispatchRoomStart(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
 
       if (evt.type === "room:leave") {
         if (!currentRoomId) return;
         const room = getRoomById(currentRoomId);
-        if (room) {
-          await internalCleanupLeave(room, socket.data.userId, emitToRoom);
-        }
+        if (room) await internalCleanupLeave(room, socket.data.userId, emitToRoom);
         socket.leave(currentRoomId);
         socketRoom.delete(socket.id);
         socket.emit("evt", { type: "room:left" });
@@ -292,11 +270,7 @@ io.on("connection", async (socketRaw) => {
         if (!room) throw new Error("Room not found");
         setReady(room, socket.data.userId, evt.ready);
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        if (room.gameKey !== "holdem") {
-          await maybeStartGame(room, emitToRoom);
-        }
-        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
-        if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
+        if (room.gameKey !== "holdem") await dispatchRoomStart(room);
         if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
       }
 
@@ -306,16 +280,14 @@ io.on("connection", async (socketRaw) => {
         if (!room) throw new Error("Room not found");
         prepareNextHand(room);
         emitToRoom(room.roomId, { type: "room:update", room: toSummary(room) });
-        await maybeStartGame(room, emitToRoom);
-        if (room.gameKey === "blackjack" && room.status === "active") emitBlackjackState(room);
-        if (room.gameKey === "spades" && room.status === "active") emitSpadesState(room);
-        if (room.gameKey === "holdem" && room.status === "active") emitHoldemState(room);
+        await dispatchRoomStart(room);
       }
 
       if (evt.type === "game:action") {
         if (!currentRoomId) throw new Error("Not in room");
         const room = getRoomById(currentRoomId);
         if (!room) throw new Error("Room not found");
+
         if (room.gameKey === "blackjack") {
           await applyBlackjackAction(room, socket.data.userId, evt.action, emitToRoom, emitToSocket);
           emitBlackjackState(room);
@@ -325,10 +297,12 @@ io.on("connection", async (socketRaw) => {
         } else if (room.gameKey === "holdem") {
           await applyHoldemAction(room, socket.data.userId, evt.action);
           emitHoldemState(room);
-          
-          if (r.heState && holdemPlugin.isGameOver(r.heState) && r.status === "active") {
-          await endHoldemGame(r, emitToRoom, emitToSocket);
-        }
+          if (room.heState && holdemPlugin.isGameOver(room.heState) && room.status === "active") {
+            await endHoldemGame(room, emitToRoom, emitToSocket);
+          }
+        } else if (isGeneric(room.gameKey)) {
+          const ended = await applyGenericAction(room, socket.data.userId, evt.action, emitToRoom, emitToSocket);
+          if (!ended) emitGenericState(room);
         } else {
           throw new Error("Game not implemented");
         }
@@ -342,31 +316,33 @@ io.on("connection", async (socketRaw) => {
     const roomId = socketRoom.get(socket.id);
     if (!roomId) return;
     socketRoom.delete(socket.id);
-
-    // We need room lookup by id. Keep it minimal: import the rooms map via a dedicated getter.
-    const { getRoomById, internalCleanupLeave } = await import("./rooms/runtime.js");
     const room = getRoomById(roomId);
     if (!room) return;
-
     internalCleanupLeave(room, socket.data.userId, emitToRoom);
   });
 });
 
-// Tick loop: timeouts + bot turns (v1: blackjack timeout only)
 setInterval(async () => {
   const { listRooms } = await import("./rooms/runtime.js");
   const all = listRooms();
   for (const r of all) {
-    const advancedBlackjack = await handleTimeoutTick(r, emitToRoom, emitToSocket);
-    if (advancedBlackjack && r.gameKey === "blackjack") emitBlackjackState(r);
-    const advanced = await handleSpadesBotTick(r);
-    if (advanced && r.gameKey === "spades") emitSpadesState(r);
+    const advancedBJ = await handleTimeoutTick(r, emitToRoom, emitToSocket);
+    if (advancedBJ && r.gameKey === "blackjack") emitBlackjackState(r);
+
+    const advancedSpades = await handleSpadesBotTick(r);
+    if (advancedSpades && r.gameKey === "spades") emitSpadesState(r);
+
     const advancedHoldem = await handleHoldemBotTick(r);
     if (advancedHoldem && r.gameKey === "holdem") {
       emitHoldemState(r);
       if (r.heState && holdemPlugin.isGameOver(r.heState) && r.status === "active") {
-  await endHoldemGame(r, emitToRoom, emitToSocket);
-}
+        await endHoldemGame(r, emitToRoom, emitToSocket);
+      }
+    }
+
+    const advancedGeneric = await handleGenericBotTick(r, emitToRoom, emitToSocket);
+    if (advancedGeneric && isGeneric(r.gameKey) && r.status === "active") {
+      emitGenericState(r);
     }
   }
 }, 500);

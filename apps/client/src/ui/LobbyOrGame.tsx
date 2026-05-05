@@ -5,6 +5,12 @@ import { getSocket } from "../lib/socket";
 import { BlackjackTable } from "./games/BlackjackTable";
 import { SpadesTable } from "./games/SpadesTable";
 import { HoldemTable } from "./games/HoldemTable";
+import { LiarsDiceTable } from "./games/LiarsDiceTable";
+import { DominoesTable } from "./games/DominoesTable";
+import { CheckersTable } from "./games/CheckersTable";
+import { ChessTable } from "./games/ChessTable";
+import { SolitaireTable } from "./games/SolitaireTable";
+import { ScrabbleTable } from "./games/ScrabbleTable";
 
 export function LobbyOrGame() {
   const { room, youSeatIndex } = useApp();
@@ -41,16 +47,12 @@ export function LobbyOrGame() {
         {room.gameKey === "blackjack" && <BlackjackTable />}
         {room.gameKey === "spades" && <SpadesTable />}
         {room.gameKey === "holdem" && <HoldemTable />}
-        {room.gameKey !== "blackjack" && room.gameKey !== "spades" && room.gameKey !== "holdem" && (
-          <div className="h-full grid place-items-center text-white/70">
-            <div className="panel p-4 max-w-[320px] text-center">
-              <div className="text-lg font-bold">Coming next</div>
-              <div className="text-sm text-white/60 mt-1">
-                This room shell + economy is ready. Implement the next game plugin under /packages/shared and render it here.
-              </div>
-            </div>
-          </div>
-        )}
+        {room.gameKey === "liars_dice" && <LiarsDiceTable />}
+        {room.gameKey === "dominoes" && <DominoesTable />}
+        {room.gameKey === "checkers" && <CheckersTable />}
+        {room.gameKey === "chess" && <ChessTable />}
+        {room.gameKey === "solitaire" && <SolitaireTable />}
+        {room.gameKey === "scrabble" && <ScrabbleTable />}
       </div>
 
       <BottomActionBar />
